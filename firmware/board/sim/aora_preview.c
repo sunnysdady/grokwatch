@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 LV_FONT_DECLARE(gz_20)
 const lv_font_t* gw_f20(void){ return &gz_20; }
 const lv_font_t* gw_f21(void){ return &gz_20; }
@@ -40,6 +41,16 @@ int main(int argc,char** argv){
         gw_grok_text("assistant",state==3?"明天晴天，出发前记得带水。":"");
         step(1200); shot(argv[1],names[state]);
     }
+    gw_grok_set_night(true);
+    for(int state=0;state<5;state++){ char nm[32]; gw_grok_state(state); gw_grok_level(80);
+        gw_grok_text("user",state==1?"明天适合骑车吗？":""); gw_grok_text("assistant",state==3?"明天晴天，出发前记得带水。":"");
+        step(1200); snprintf(nm,sizeof nm,"n_%s",names[state]); shot(argv[1],nm); }
+    gw_grok_set_night(false);
+    { // host-only render cost of one animated avatar frame (NOT a device number)
+      struct timespec a,b; double tot=0,mx=0; gw_grok_state(3);
+      for(int i=0;i<200;i++){ now+=33; clock_gettime(CLOCK_MONOTONIC,&a); lv_timer_handler(); clock_gettime(CLOCK_MONOTONIC,&b);
+        double ms=(b.tv_sec-a.tv_sec)*1e3+(b.tv_nsec-a.tv_nsec)/1e6; tot+=ms; if(ms>mx) mx=ms; }
+      printf("PERF host speaking frame (ASan -O1): avg %.3f ms max %.3f ms\n",tot/200,mx); }
     gw_grok_state(0); gw_grok_text("user",""); gw_grok_text("assistant",""); step(900);
     for(int frame=0;frame<48;frame++){ char name[40]; snprintf(name,sizeof name,"motion_%02d",frame); step(40); shot(argv[1],name); }
     lv_mem_monitor_t before,after; lv_mem_monitor(&before);

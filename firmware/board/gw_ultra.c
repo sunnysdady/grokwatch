@@ -104,7 +104,7 @@ static void app_style(const char* a,const char** ic,uint32_t* c){ *ic=I_MSG; *c=
 
 static void cc_click(lv_event_t* e){ int i=(int)(intptr_t)lv_event_get_user_data(e); if(cc_cb) cc_cb(i); }
 static void cc_bg_click(lv_event_t* e){ (void)e; }
-void gw_faces_set_night(bool on){ night=on; }
+void gw_faces_set_night(bool on){ night=on; gw_grok_set_night(on); }
 void gw_faces_set_fade(bool on){ fade=on; }
 static bool slide_on=true; void gw_faces_set_slide(bool on){ slide_on=on; }
 void gw_faces_dir(int d){ dir=d<0?-1:1; }

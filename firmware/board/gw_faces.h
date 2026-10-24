@@ -49,6 +49,7 @@ void gw_grok_level(int lvl);          // 0..100 mic level (listening)
 void gw_grok_text(const char* role, const char* text); // "user" / "assistant"
 void gw_grok_status(const char* s);
 void gw_grok_visible(bool on);
+void gw_grok_set_night(bool on);    // teal/mint by day, dimmed warm white at night
 #ifdef __cplusplus
 }
 #endif
