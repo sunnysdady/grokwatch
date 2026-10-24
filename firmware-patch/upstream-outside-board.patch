@@ -1236,12 +1236,37 @@ index be3f5cb..dd49af8 100644
      # Boards that set CONFIG_SPIRAM=n must not keep the 1MB chip-default
      # pool as a .dram0.bss array (build.py also switches those variants
 diff --git a/main/application.cc b/main/application.cc
-index 9dd16e1..e72fa26 100644
 --- a/main/application.cc
 +++ b/main/application.cc
-@@ -511,7 +511,9 @@ void Application::CheckNewVersion() {
+@@ -410,7 +410,11 @@
+
+     Settings settings("assets", true);
+     // Check if there is a new assets need to be downloaded
++#if GW_TEST_CONSOLE
++    std::string download_url; // Preserve existing resources during recovery testing.
++#else
+     std::string download_url = settings.GetString("download_url");
++#endif
+
+     if (!download_url.empty()) {
+         settings.EraseKey("download_url");
+@@ -503,6 +507,7 @@
+         retry_count = 0;
+         retry_delay = 10;  // Reset retry delay
+
++#if !GW_TEST_CONSOLE
+         if (ota_->HasNewVersion()) {
+             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+                 return;  // This line will never be reached after reboot
+@@ -510,8 +515,15 @@
+             // If upgrade failed, continue to normal operation
          }
- 
+
++#else
++        // CheckVersion also retrieves service credentials and activation state.
++        // Keep that request; suppress only firmware installation in test builds.
++        ESP_LOGW(TAG, "Service configuration loaded; automatic OTA install disabled");
++#endif
          // No new version, mark the current version as valid
 -        ota_->MarkCurrentVersionValid();
 +#ifndef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
@@ -7784,3 +7809,17 @@ index 0000000..77ae2a0
 +# CONFIG_SUPPORT_TERMIOS is not set
 +CONFIG_SEMIHOSTFS_MAX_MOUNT_POINTS=1
 +# End of deprecated options
+diff --git a/main/ota.cc b/main/ota.cc
+--- a/main/ota.cc
++++ b/main/ota.cc
+@@ -278,6 +278,10 @@
+ }
+
+ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback) {
++#if GW_TEST_CONSOLE
++    ESP_LOGW(TAG, "OTA writes disabled in hardware-test console build");
++    return false;
++#endif
+     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
+     esp_ota_handle_t update_handle = 0;
+     auto update_partition = esp_ota_get_next_update_partition(NULL);
