@@ -8,7 +8,7 @@ index 5326d47..a127c0a 100644
  .clangd
 +sdkconfig.private
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3b9df7e..2392273 100644
+index 3b9df7e..6564b3f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -9,5 +9,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
@@ -16,7 +16,7 @@ index 3b9df7e..2392273 100644
  idf_build_set_property(MINIMAL_BUILD ON)
  
 -set(PROJECT_VER "2.5.3")
-+set(PROJECT_VER "2.6.4")
++set(PROJECT_VER "2.6.5")
  project(xiaozhi)
 diff --git a/dependencies.lock b/dependencies.lock
 new file mode 100644
@@ -1265,6 +1265,38 @@ index 6d0643c..1c035b7 100644
          .trans_size = 0,
          .hres = static_cast<uint32_t>(width_),
          .vres = static_cast<uint32_t>(height_),
+diff --git a/main/display/lvgl_display/lvgl_display.cc b/main/display/lvgl_display/lvgl_display.cc
+index 12a887e..82fb7fd 100644
+--- a/main/display/lvgl_display/lvgl_display.cc
++++ b/main/display/lvgl_display/lvgl_display.cc
+@@ -70,6 +70,9 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
+     if (current_theme_ != nullptr) {
+         SetTheme(current_theme_);
+     }
++    if (text_font_changed_cb_ != nullptr) {
++        text_font_changed_cb_(text_font->font());
++    }
+     previous_light_font.reset();
+     previous_dark_font.reset();
+     return true;
+diff --git a/main/display/lvgl_display/lvgl_display.h b/main/display/lvgl_display/lvgl_display.h
+index 465e020..ee7a6c6 100644
+--- a/main/display/lvgl_display/lvgl_display.h
++++ b/main/display/lvgl_display/lvgl_display.h
+@@ -33,7 +33,13 @@ public:
+     virtual bool SetTextFont(std::shared_ptr<LvglFont> text_font) override;
+     virtual bool SupportsGuiOperations() const override { return true; }
+ 
++    // Called (under the display lock) after SetTextFont() rebinds the theme and BEFORE the previous
++    // font is released, so code holding raw lv_font_t* (e.g. as a .fallback) can re-point them.
++    using TextFontChangedCallback = void (*)(const lv_font_t* new_font);
++    static void SetTextFontChangedCallback(TextFontChangedCallback cb) { text_font_changed_cb_ = cb; }
++
+ protected:
++    static inline TextFontChangedCallback text_font_changed_cb_ = nullptr;
+     esp_pm_lock_handle_t pm_lock_ = nullptr;
+     lv_display_t* display_ = nullptr;
+ 
 diff --git a/sdkconfig.ble b/sdkconfig.ble
 new file mode 100644
 index 0000000..77ae2a0

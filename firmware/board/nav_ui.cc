@@ -12,6 +12,7 @@
 #include "board.h"
 #include "application.h"
 #include "display/display.h"
+#include "display/lvgl_display/lvgl_display.h"
 #include "audio/audio_codec.h"
 #include "backlight.h"
 #include "settings.h"
@@ -98,9 +99,15 @@ static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_ac
 static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
   if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
   else if(c==LV_EVENT_RELEASED){ if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
+// P0 (2.6.4 crash): F20/F21 keep a raw .fallback to the theme text font. LvglBuiltInFont owns a heap COPY of the
+// builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
+// lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,
+// before the old font is released).
+static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_invalidate(lv_screen_active()); }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
+  LvglDisplay::SetTextFontChangedCallback(on_text_font_changed);
   gw_faces_set_fallback(lv_obj_get_style_text_font(scr,LV_PART_MAIN)); gw_faces_set_night(night); gw_faces_set_fade(false); gw_faces_create(scr);
   lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);

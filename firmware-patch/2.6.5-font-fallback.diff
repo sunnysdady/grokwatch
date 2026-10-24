@@ -1,0 +1,185 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2392273..6564b3f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.6.4")
++set(PROJECT_VER "2.6.5")
+ project(xiaozhi)
+diff --git a/main/boards/m5stack/stopwatch/gw_console.cc b/main/boards/m5stack/stopwatch/gw_console.cc
+index 1ae6bda..9b3e71f 100644
+--- a/main/boards/m5stack/stopwatch/gw_console.cc
++++ b/main/boards/m5stack/stopwatch/gw_console.cc
+@@ -20,6 +20,7 @@ extern "C" void gw_console_start(void);
+ #include <lvgl.h>
+ #include <esp_lvgl_port.h>
+ #include "gw_health.h"
++#include <esp_memory_utils.h>
+ void NavUiGoPage(int p); int NavUiPage(); void NavUiTouchLog(bool on); void NavUiFpsLog(bool on); bool NavUiSlideOn();
+ uint32_t NavUiFrameStats(int n,int* mn,int* av,int* mx);
+ static const char* TAG="gwcon";
+@@ -42,6 +43,38 @@ static void stat(){
+     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+     rr_str((int)esp_reset_reason()),(unsigned long)r->boots,(unsigned long)r->pv_failed,(unsigned long)r->fail_up_s,(unsigned long)r->crash_rr_count); }
++// ---- profiler: per-frame breakdown from LVGL display events ----
++static int64_t p_t_refr=0,p_t_fw=0; static int64_t p_refr_sum=0,p_wait_sum=0,p_refr_max=0; static uint32_t p_frames=0,p_flushes=0,p_px=0;
++static void prof_cb(lv_event_t* e){ int64_t t=esp_timer_get_time(); switch(lv_event_get_code(e)){
++  case LV_EVENT_REFR_START: p_t_refr=t; break;
++  case LV_EVENT_REFR_READY: if(p_t_refr){ int64_t d=t-p_t_refr; p_refr_sum+=d; if(d>p_refr_max) p_refr_max=d; p_frames++; } break;
++  case LV_EVENT_FLUSH_START: { p_flushes++; lv_area_t* a=(lv_area_t*)lv_event_get_param(e); if(a) p_px+=lv_area_get_size(a); } break;
++  case LV_EVENT_FLUSH_WAIT_START: p_t_fw=t; break;
++  case LV_EVENT_FLUSH_WAIT_FINISH: if(p_t_fw) p_wait_sum+=t-p_t_fw; break;
++  default: break; } }
++static bool prof_hooked=false; static lv_timer_t* force_t=nullptr;
++static void force_cb(lv_timer_t*){ lv_obj_invalidate(lv_screen_active()); }
++static void prof(int secs, bool force){
++  if(lvgl_port_lock(0)){ lv_display_t* d=lv_display_get_default();
++    if(!prof_hooked){ lv_display_add_event_cb(d,prof_cb,LV_EVENT_ALL,nullptr); prof_hooked=true; }
++    if(force && !force_t) force_t=lv_timer_create(force_cb,33,nullptr);
++    lv_draw_buf_t* b1=lv_display_get_buf_active(d);
++    outf("BUF active=%p size=%lu internal=%d dma=%d render_mode=%d\n", b1?b1->data:nullptr, b1?(unsigned long)b1->data_size:0UL,
++      b1?(int)esp_ptr_internal(b1->data):-1, b1?(int)esp_ptr_dma_capable(b1->data):-1, (int)lv_display_get_render_mode(d));
++    lvgl_port_unlock(); }
++  p_refr_sum=p_wait_sum=p_refr_max=0; p_frames=p_flushes=p_px=0; int64_t t0=esp_timer_get_time();
++  static TaskStatus_t a[40], b[40]; uint32_t ta,tb; /* static: 2x40 TaskStatus_t (~3KB) overflowed the 4KB gw_console stack */ int na=uxTaskGetSystemState(a,40,&ta);
++  vTaskDelay(pdMS_TO_TICKS(secs*1000));
++  int nb=uxTaskGetSystemState(b,40,&tb); int64_t dt=esp_timer_get_time()-t0;
++  if(force_t){ lvgl_port_lock(0); lv_timer_delete(force_t); force_t=nullptr; lvgl_port_unlock(); }
++  outf("PROF %s %ds frames=%lu fps=%.1f flushes=%lu px/frame=%lu refr_avg=%.1fms refr_max=%.1fms flush_wait_avg=%.1fms/frame\n",
++    force?"forced-full":"idle", secs,(unsigned long)p_frames, p_frames*1e6/dt,(unsigned long)p_flushes, p_frames?(unsigned long)(p_px/p_frames):0UL,
++    p_frames?p_refr_sum/1e3/p_frames:0.0, p_refr_max/1e3, p_frames?p_wait_sum/1e3/p_frames:0.0);
++  uint32_t tot=tb-ta; if(!tot) tot=1;
++  for(int i=0;i<nb;i++){ uint32_t prev=0; for(int j=0;j<na;j++) if(a[j].xHandle==b[i].xHandle) prev=a[j].ulRunTimeCounter;
++    uint32_t d=b[i].ulRunTimeCounter-prev; int pct=(int)(d*100ULL/tot);
++    if(pct>=1) outf("TASK %-16s prio=%u core=%d cpu=%d%%\n", b[i].pcTaskName,(unsigned)b[i].uxCurrentPriority,(int)xTaskGetCoreID(b[i].xHandle),pct); }
++  out("PROF end\n"); }
+ static void handle(char* l){
+   char c[16]={0}, a[16]={0}; int x=0,y=0; int n=sscanf(l,"%15s %15s %d",c,a,&y); (void)n;
+   if(!strcmp(c,"swipe")){ char d=a[0];
+@@ -51,6 +84,8 @@ static void handle(char* l){
+   else if(!strcmp(c,"tap")||!strcmp(c,"longpress")){ x=atoi(a); bool lp=c[0]=='l'; inj_x=x; inj_y=y; inj_down=true; vTaskDelay(pdMS_TO_TICKS(lp?800:80)); inj_down=false; vTaskDelay(pdMS_TO_TICKS(60)); outf("OK %s %d %d\n",c,x,y); }
+   else if(!strcmp(c,"page")){ NavUiGoPage(atoi(a)); vTaskDelay(pdMS_TO_TICKS(300)); outf("OK page=%d\n",NavUiPage()); }
+   else if(!strcmp(c,"stat")) stat();
++  else if(!strcmp(c,"prof")) prof(a[0]?atoi(a):3,false);
++  else if(!strcmp(c,"proffull")) prof(a[0]?atoi(a):3,true);
+   else if(!strcmp(c,"fps")){ NavUiFpsLog(!strcmp(a,"on")); out("OK\n"); }
+   else if(!strcmp(c,"touchlog")){ NavUiTouchLog(!strcmp(a,"on")); out("OK\n"); }
+   else out("CMDS: swipe l|r|u|d | tap x y | longpress x y | page n | stat | fps on|off | touchlog on|off\n"); }
+@@ -62,7 +97,7 @@ extern "C" void gw_console_start(void){
+   if(usb_serial_jtag_driver_install(&cfg)!=ESP_OK){ ESP_LOGE(TAG,"usj driver install failed"); return; }
+   if(lvgl_port_lock(0)){ lv_indev_t* i=lv_indev_create(); lv_indev_set_type(i,LV_INDEV_TYPE_POINTER); lv_indev_set_read_cb(i,inj_read);
+     lv_indev_set_display(i,lv_display_get_default()); lvgl_port_unlock(); }
+-  xTaskCreate(task,"gw_console",4096,nullptr,3,nullptr); ESP_LOGW(TAG,"test console on USB-Serial-JTAG (type help)"); }
++  xTaskCreate(task,"gw_console",6144,nullptr,3,nullptr); ESP_LOGW(TAG,"test console on USB-Serial-JTAG (type help)"); }
+ #else
+ extern "C" void gw_console_start(void){}
+ #endif
+diff --git a/main/boards/m5stack/stopwatch/nav_ui.cc b/main/boards/m5stack/stopwatch/nav_ui.cc
+index 2b39dda..d0af232 100644
+--- a/main/boards/m5stack/stopwatch/nav_ui.cc
++++ b/main/boards/m5stack/stopwatch/nav_ui.cc
+@@ -12,6 +12,7 @@
+ #include "board.h"
+ #include "application.h"
+ #include "display/display.h"
++#include "display/lvgl_display/lvgl_display.h"
+ #include "audio/audio_codec.h"
+ #include "backlight.h"
+ #include "settings.h"
+@@ -98,9 +99,15 @@ static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_ac
+ static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
+   if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
+   else if(c==LV_EVENT_RELEASED){ if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
++// P0 (2.6.4 crash): F20/F21 keep a raw .fallback to the theme text font. LvglBuiltInFont owns a heap COPY of the
++// builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
++// lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,
++// before the old font is released).
++static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_invalidate(lv_screen_active()); }
+ static void build_ui(){
+   lv_obj_t* scr=lv_screen_active();
+   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
++  LvglDisplay::SetTextFontChangedCallback(on_text_font_changed);
+   gw_faces_set_fallback(lv_obj_get_style_text_font(scr,LV_PART_MAIN)); gw_faces_set_night(night); gw_faces_set_fade(false); gw_faces_create(scr);
+   lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
+   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);
+diff --git a/main/boards/m5stack/stopwatch/sim/repro_font_uaf.c b/main/boards/m5stack/stopwatch/sim/repro_font_uaf.c
+new file mode 100644
+index 0000000..d03e5b1
+--- /dev/null
++++ b/main/boards/m5stack/stopwatch/sim/repro_font_uaf.c
+@@ -0,0 +1,39 @@
++// P0 repro (host): page font F20 = copy of gz_20 whose .fallback points at a heap-owned lv_font_t
++// (like LvglBuiltInFont, which COPIES the builtin font into a shared_ptr-owned object).
++// SetTextFont() frees that object; the next layout of a label with a glyph missing from gz_20 walks
++// the dangling fallback.  Usage: repro bug | repro fix
++#include "lvgl.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++LV_FONT_DECLARE(gz_20)
++static uint32_t tick=0; static uint32_t tk(void){return tick;}
++static uint8_t buf[466*40*2];
++static void flush(lv_display_t* d,const lv_area_t* a,uint8_t* p){(void)a;(void)p;lv_display_flush_ready(d);}
++int main(int argc,char** argv){
++  int fix = argc>1 && !strcmp(argv[1],"fix");
++  lv_init(); lv_tick_set_cb(tk);
++  lv_display_t* d=lv_display_create(466,466); lv_display_set_flush_cb(d,flush);
++  lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_PARTIAL);
++  // a code point montserrat_14 has but gz_20 lacks -> forces the fallback path
++  lv_font_glyph_dsc_t g; uint32_t cp=0;
++  static const uint32_t C[]={0xB0,0x7E,0x40,0x23,0x25,0x26,0x5E,0x7C};
++  lv_font_t probe=gz_20; probe.fallback=NULL;
++  for(unsigned i=0;i<sizeof C/sizeof*C;i++) if(!lv_font_get_glyph_dsc(&probe,&g,C[i],0) && lv_font_get_glyph_dsc(&lv_font_montserrat_14,&g,C[i],0)){cp=C[i];break;}
++  if(!cp){ printf("no probe code point found\n"); return 2; }
++  static lv_font_t f20; f20=gz_20;
++  lv_font_t* theme=malloc(sizeof *theme); *theme=lv_font_montserrat_14;   // LvglBuiltInFont copy
++  f20.fallback = fix ? &lv_font_montserrat_14 : theme;                     // fix: never-freed font (or re-pointed by hook)
++  lv_obj_t* l=lv_label_create(lv_screen_active()); lv_obj_set_style_text_font(l,&f20,0);
++  char t[16];
++  // utf8 encode cp
++  char u[5]={0}; if(cp<0x80){u[0]=cp;} else {u[0]=0xC0|(cp>>6); u[1]=0x80|(cp&63);} snprintf(t,sizeof t,"12%s",u);
++  lv_label_set_text(l,t); lv_refr_now(d);
++  printf("U+%04X rendered via fallback before free: ok\n",(unsigned)cp);
++  if(!getenv("NOPOISON")) memset(theme,0xff,sizeof *theme); free(theme);                           // SetTextFont(): previous font owner reset
++  lv_label_set_text(l,"8"); lv_label_set_text(l,t);                         // any later relayout
++  for(int i=0;i<200;i++){ tick+=10; lv_timer_handler(); }
++  lv_refr_now(d);
++  printf("%s: survived relayout after theme font freed\n",fix?"FIX":"BUG");
++  return 0;
++}
+diff --git a/main/display/lvgl_display/lvgl_display.cc b/main/display/lvgl_display/lvgl_display.cc
+index 12a887e..82fb7fd 100644
+--- a/main/display/lvgl_display/lvgl_display.cc
++++ b/main/display/lvgl_display/lvgl_display.cc
+@@ -70,6 +70,9 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
+     if (current_theme_ != nullptr) {
+         SetTheme(current_theme_);
+     }
++    if (text_font_changed_cb_ != nullptr) {
++        text_font_changed_cb_(text_font->font());
++    }
+     previous_light_font.reset();
+     previous_dark_font.reset();
+     return true;
+diff --git a/main/display/lvgl_display/lvgl_display.h b/main/display/lvgl_display/lvgl_display.h
+index 465e020..ee7a6c6 100644
+--- a/main/display/lvgl_display/lvgl_display.h
++++ b/main/display/lvgl_display/lvgl_display.h
+@@ -33,7 +33,13 @@ public:
+     virtual bool SetTextFont(std::shared_ptr<LvglFont> text_font) override;
+     virtual bool SupportsGuiOperations() const override { return true; }
+ 
++    // Called (under the display lock) after SetTextFont() rebinds the theme and BEFORE the previous
++    // font is released, so code holding raw lv_font_t* (e.g. as a .fallback) can re-point them.
++    using TextFontChangedCallback = void (*)(const lv_font_t* new_font);
++    static void SetTextFontChangedCallback(TextFontChangedCallback cb) { text_font_changed_cb_ = cb; }
++
+ protected:
++    static inline TextFontChangedCallback text_font_changed_cb_ = nullptr;
+     esp_pm_lock_handle_t pm_lock_ = nullptr;
+     lv_display_t* display_ = nullptr;
+ 
