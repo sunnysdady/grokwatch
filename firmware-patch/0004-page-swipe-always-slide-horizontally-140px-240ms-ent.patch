@@ -1,0 +1,89 @@
+From e43a4457ab63540fded5c741d5a04bba1689e041 Mon Sep 17 00:00:00 2001
+From: GrokWatch <gw@local>
+Date: Sat, 24 Oct 2026 23:17:23 +0800
+Subject: [PATCH 4/5] page swipe: always slide horizontally (140px/240ms, enter
+ from swipe side); was disabled by fade=false so strip flush read as vertical
+ wipe; sim swipe-direction audit; 2.6.3
+
+---
+ CMakeLists.txt                           |  2 +-
+ main/boards/m5stack/stopwatch/gw_faces.h |  3 +++
+ main/boards/m5stack/stopwatch/gw_ultra.c |  7 +++++--
+ main/boards/m5stack/stopwatch/sim/sim.c  | 11 +++++++++++
+ 4 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e62609e..1470813 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.6.2")
++set(PROJECT_VER "2.6.3")
+ project(xiaozhi)
+diff --git a/main/boards/m5stack/stopwatch/gw_faces.h b/main/boards/m5stack/stopwatch/gw_faces.h
+index 50d3a12..4e06e51 100644
+--- a/main/boards/m5stack/stopwatch/gw_faces.h
++++ b/main/boards/m5stack/stopwatch/gw_faces.h
+@@ -24,6 +24,9 @@ void gw_faces_set_fade(bool on);     // slide+fade (true) or slide-only (false)
+ void gw_faces_create(lv_obj_t* parent);
+ void gw_faces_set_fallback(const lv_font_t* f); // full CJK font for characters outside the built-in set
+ void gw_faces_show(int page, const gw_state_t* st);
++#define GW_SLIDE_PX 140
++#define GW_SLIDE_MS 240
++int  gw_faces_page_x(void);         // x offset of the current page (test hook: >0 entering from right)
+ void gw_faces_dir(int d);            // +1 / -1 : direction of next transition
+ void gw_faces_sheet(const char* title, const char* body); // modal sheet (NULL = hide)
+ bool gw_faces_sheet_open(void);
+diff --git a/main/boards/m5stack/stopwatch/gw_ultra.c b/main/boards/m5stack/stopwatch/gw_ultra.c
+index 6683fc6..07265ea 100644
+--- a/main/boards/m5stack/stopwatch/gw_ultra.c
++++ b/main/boards/m5stack/stopwatch/gw_ultra.c
+@@ -107,6 +107,7 @@ static void cc_bg_click(lv_event_t* e){ (void)e; }
+ void gw_faces_set_night(bool on){ night=on; }
+ void gw_faces_set_fade(bool on){ fade=on; }
+ void gw_faces_dir(int d){ dir=d<0?-1:1; }
++int gw_faces_page_x(void){ return (cur>0&&cur<GW_NPAGES&&pg[cur])?lv_obj_get_x(pg[cur]):0; }
+ 
+ void gw_faces_create(lv_obj_t* parent){
+   if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); root=NULL; cur=-1; }
+@@ -234,8 +235,10 @@ void gw_faces_show(int page, const gw_state_t* s){
+   if(page==GW_PAGE_CHAT){ lv_obj_add_flag(root,LV_OBJ_FLAG_HIDDEN); char b[8]; snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(c_time,b); return; }
+   lv_obj_remove_flag(root,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(root);
+   if(enter){ for(int i=1;i<GW_NPAGES;i++) (i==page)?lv_obj_remove_flag(pg[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN);
+-    lv_obj_t* o=pg[page]; int off=(prev<0||!fade)?0:40*dir;
+-    lv_obj_set_x(o,0); lv_obj_set_style_opa(o,LV_OPA_COVER,0); lv_obj_set_y(o,0); if(off){ anim(o,ax_x,off,0,200,0,NULL); }
++    lv_obj_t* o=pg[page]; // Horizontal slide ALWAYS (fade flag only chose slide+fade vs slide-only, but used to disable the slide entirely,
++    // so the swap was painted by the 16-line strip flush top->bottom and read as a vertical flip). +dir = enter from right.
++    int off=prev<0?0:GW_SLIDE_PX*dir;
++    lv_obj_set_x(o,0); lv_obj_set_style_opa(o,LV_OPA_COVER,0); lv_obj_set_y(o,0); if(off){ lv_obj_set_x(o,off); anim(o,ax_x,off,0,GW_SLIDE_MS,0,NULL); }
+     prog=1000; /* no sweep on enter: one crisp full redraw (sweeps cost ~120ms/frame over QSPI) */ dir=1; }
+   char b[96]; static const char* WE[]={"SUN","MON","TUE","WED","THU","FRI","SAT"};
+   if(page==GW_PAGE_FACE){
+diff --git a/main/boards/m5stack/stopwatch/sim/sim.c b/main/boards/m5stack/stopwatch/sim/sim.c
+index 4a32a3a..fd1f667 100644
+--- a/main/boards/m5stack/stopwatch/sim/sim.c
++++ b/main/boards/m5stack/stopwatch/sim/sim.c
+@@ -146,6 +146,17 @@ int main(int argc,char**argv){
+   gw_grok_visible(false); page=1; render(); gif_n=0;
+   for(int k=0;k<4;k++){ for(int i=0;i<12;i++){ step(33); gif_frame("pages"); } SWIPE_LEFT(); }
+   perf("page swipe");
++  // 8b) swipe direction audit: left swipe -> next page enters from the RIGHT (x>0 -> 0), right swipe -> from the LEFT (x<0 -> 0)
++  { int fails=0; page=1; render(); step(400);
++    struct { const char* n; int exp_page; int sign; } cs[]={{"left",2,1},{"left",3,1},{"right",2,-1},{"right",1,-1}};
++    for(int c=0;c<4;c++){ int x0=0,xmid=0;
++      px_=cs[c].sign>0?380:90; py_=233; pressed=true; step(30); for(int i=1;i<=12;i++){ px_+=(cs[c].sign>0?-24:24); step(10);
++        if(!x0 && gw_faces_page_x()) x0=gw_faces_page_x(); } pressed=false;
++      for(int f=0;f<6;f++){ step(40); int x=gw_faces_page_x(); if(f==1) xmid=x; gif_frame(c<2?"slide_left":"slide_right"); printf("  slide %s f%d x=%d\n",cs[c].n,f,x); }
++      step(300); int xe=gw_faces_page_x();
++      bool ok=page==cs[c].exp_page && x0*cs[c].sign>0 && xmid*cs[c].sign>=0 && abs(xmid)<abs(x0) && xe==0;
++      printf("%s swipe %s -> page %d: x start %d mid %d end %d\n",ok?"AUDIT OK":"AUDIT FAIL",cs[c].n,page,x0,xmid,xe); fails+=!ok; }
++    perf("slide anim"); printf("AUDIT swipe direction fails: %d\n",fails); }
+   // 9) Standby clock (day, night, minute drift)
+   gw_grok_visible(false); go(1,1); gw_standby_create(lv_layer_top());
+   gw_standby_set(10,9,0); gw_standby_show(true); shot("standby");
+-- 
+2.47.3
+
