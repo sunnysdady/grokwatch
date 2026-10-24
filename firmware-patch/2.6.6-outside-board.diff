@@ -1,0 +1,66 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3b9df7e..3455f1a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.5.3")
++set(PROJECT_VER "2.6.6")
+ project(xiaozhi)
+diff --git a/main/application.cc b/main/application.cc
+index 9dd16e1..9718c58 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -1,4 +1,7 @@
+ #include "application.h"
++#ifdef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++#include "boards/m5stack/stopwatch/gw_health.h"
++#endif
+ #include "assets.h"
+ #include "assets/lang_config.h"
+ #include "audio_codec.h"
+@@ -410,7 +413,11 @@ void Application::CheckAssetsVersion() {
+ 
+     Settings settings("assets", true);
+     // Check if there is a new assets need to be downloaded
++#if GW_TEST_CONSOLE
++    std::string download_url; // Preserve existing resources during recovery testing.
++#else
+     std::string download_url = settings.GetString("download_url");
++#endif
+ 
+     if (!download_url.empty()) {
+         settings.EraseKey("download_url");
+@@ -503,6 +510,13 @@ void Application::CheckNewVersion() {
+         retry_count = 0;
+         retry_delay = 10;  // Reset retry delay
+ 
++#if !GW_TEST_CONSOLE
++#ifdef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++        // GrokWatch OTA loop guard: never auto-reinstall a version whose earlier pending boot failed.
++        if (ota_->HasNewVersion() && gw_ota_refuse(gw_ota_bad_version(), ota_->GetFirmwareVersion().c_str())) {
++            ESP_LOGE(TAG, "Refusing OTA %s: it failed to validate before", ota_->GetFirmwareVersion().c_str());
++        } else
++#endif
+         if (ota_->HasNewVersion()) {
+             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+                 return;  // This line will never be reached after reboot
+@@ -510,8 +524,15 @@ void Application::CheckNewVersion() {
+             // If upgrade failed, continue to normal operation
+         }
+ 
++#else
++        // CheckVersion also retrieves service credentials and activation state.
++        // Keep that request; suppress only firmware installation in test builds.
++        ESP_LOGW(TAG, "Service configuration loaded; automatic OTA install disabled");
++#endif
+         // No new version, mark the current version as valid
+-        ota_->MarkCurrentVersionValid();
++#ifndef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++        ota_->MarkCurrentVersionValid();   // GrokWatch validates from local boot health instead (boards/m5stack/stopwatch/gw_health*)
++#endif
+         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
+             // Exit the loop if done checking new version
+             break;

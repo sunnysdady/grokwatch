@@ -399,8 +399,8 @@ private:
 public:
     // GrokWatch: boot record rides along in the OTA check body (board.gw_boot), readable server-side without serial.
     std::string GetBoardJson() override {
-        std::string j = WifiBoard::GetBoardJson(); char b[200];
-        if (gw_bootrec_json(gw_bootrec_get(), b, sizeof b) > 0 && !j.empty() && j.back() == '}') { j.pop_back(); j += ",\"gw_boot\":"; j += b; j += "}"; }
+        std::string j = WifiBoard::GetBoardJson(); char b[256];
+        if (gw_bootrec_json_ex(gw_bootrec_get(), gw_ota_bad_version(), b, sizeof b) > 0 && !j.empty() && j.back() == '}') { j.pop_back(); j += ",\"gw_boot\":"; j += b; j += "}"; }
         return j;
     }
     M5StackStopwatchBoard()

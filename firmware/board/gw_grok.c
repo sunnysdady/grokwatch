@@ -9,6 +9,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
 const lv_font_t* gw_f20(void); const lv_font_t* gw_f21(void);
 #define F20 gw_f20()
 #define F21 gw_f21()
@@ -39,20 +42,46 @@ static void target_eye(bool immediate){
   if(immediate) memcpy(g_points,g_to,sizeof g_points);
   g_morph_at=g_now;
 }
+// Both eyes are rasterized as whole polygons into one A8 coverage mask, then blended once.
+// One fill per contour means no internal antialias seams (the old triangle strip had 46).
+enum { AV=220, SUB=4 };
+static uint8_t* g_mask;           // AV*AV A8, allocated once (PSRAM on device), never per frame
+static lv_image_dsc_t g_mask_img;
+static float g_cov[AV+2];
+static void raster_eye(const float (*pt)[2], int n, int y0, int y1){
+  for(int py=y0; py<=y1; py++){
+    memset(g_cov,0,sizeof g_cov);
+    for(int s=0;s<SUB;s++){
+      float sy=py+(s+.5f)/SUB, xs[16]; int k=0;
+      for(int i=0,j=n-1;i<n;j=i++){
+        float ya=pt[i][1], yb=pt[j][1];
+        if((ya<=sy)!=(yb<=sy) && k<16) xs[k++]=pt[i][0]+(sy-ya)*(pt[j][0]-pt[i][0])/(yb-ya);
+      }
+      for(int i=1;i<k;i++){ float v=xs[i]; int j=i-1; while(j>=0&&xs[j]>v){ xs[j+1]=xs[j]; j--; } xs[j+1]=v; }
+      for(int i=0;i+1<k;i+=2){
+        float xa=xs[i]<0?0:xs[i], xb=xs[i+1]>AV?AV:xs[i+1]; if(xb<=xa) continue;
+        int ia=(int)xa, ib=(int)xb;
+        if(ia==ib){ g_cov[ia]+=(xb-xa)/SUB; continue; }
+        g_cov[ia]+=(ia+1-xa)/SUB; for(int x=ia+1;x<ib;x++) g_cov[x]+=1.f/SUB; if(ib<AV) g_cov[ib]+=(xb-ib)/SUB;
+      }
+    }
+    uint8_t* row=g_mask+py*AV;
+    for(int x=0;x<AV;x++){ float c=g_cov[x]; int v=(int)(c*255.f+.5f); v=v>255?255:v; if(v>row[x]) row[x]=(uint8_t)v; }
+  }
+}
 static void draw_avatar(lv_event_t* event){
   lv_layer_t* layer=lv_event_get_layer(event);
   lv_area_t bounds; lv_obj_get_coords(g_avatar,&bounds);
   float breathe=1.0f+.010f*wave(g_now,3600);
   float bob=g_st==3?2.2f*wave(g_now,1400):(g_st==4?4.0f:0);
-  float cx=bounds.x1+110, cy=bounds.y1+110+bob;
-  int radius=(int)(100*breathe);
-  lv_area_t body={(int32_t)cx-radius,(int32_t)cy-radius,(int32_t)cx+radius,(int32_t)cy+radius};
+  float cx=110, cy=110+bob;
+  int radius=(int)(100*breathe+.5f);
+  lv_area_t body={bounds.x1+(int32_t)cx-radius,bounds.y1+(int32_t)cy-radius,bounds.x1+(int32_t)cx+radius,bounds.y1+(int32_t)cy+radius};
+  // Flat tonal body: RGB565 cannot carry a 200px light gradient without visible bands.
   lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.radius=LV_RADIUS_CIRCLE;
-  d.bg_color=lv_color_hex(g_st==3?0xF6EFE4:0xF3F1EB); d.bg_opa=LV_OPA_COVER;
-  d.bg_grad.dir=LV_GRAD_DIR_VER; d.bg_grad.stops_count=2;
-  d.bg_grad.stops[0].color=d.bg_color; d.bg_grad.stops[0].opa=255; d.bg_grad.stops[0].frac=0;
-  d.bg_grad.stops[1].color=lv_color_hex(0xD4D1CB); d.bg_grad.stops[1].opa=255; d.bg_grad.stops[1].frac=255;
+  d.bg_color=lv_color_hex(g_st==3?0xF6EFE4:(g_st==4?0xD9D7D2:0xF1EFE9)); d.bg_opa=LV_OPA_COVER;
   lv_draw_rect(layer,&d,&body);
+  if(!g_mask) return;
   float dx=0,dy=0,eye_scale=g_st==4?.88f:1;
   if(g_st==0){ dx=10*glance(g_now,4800); dy=2*wave(g_now+718,4100); }
   if(g_st==1) dy=6*wave(g_now,2200);
@@ -61,19 +90,25 @@ static void draw_avatar(lv_event_t* event){
   if(g_st==4) dy=12+1.6f*wave(g_now,3600);
   uint32_t blink=g_now%gw_aora_cfg[g_st].blink_ms;
   float open=blink<90?1-.94f*blink/90:(blink<200?.06f+.94f*(blink-90)/110:1);
-  lv_draw_triangle_dsc_t tri; lv_draw_triangle_dsc_init(&tri); tri.color=lv_color_hex(0x1C1C1B); tri.opa=255;
+  static float pts[2][48][2]; float minx=AV,maxx=0,miny=AV,maxy=0;
   for(int e=0;e<2;e++){
-    lv_point_precise_t points[48]; float mid=0;
-    for(int i=0;i<48;i++) mid+=g_points[e][i][1]/48;
+    float mid=0; for(int i=0;i<48;i++) mid+=g_points[e][i][1]/48;
     for(int i=0;i<48;i++){
-      points[i].x=(int32_t)(cx+(g_points[e][i][0]*eye_scale+dx)*.85f*breathe);
-      points[i].y=(int32_t)(cy+(mid+(g_points[e][i][1]-mid)*open*eye_scale+dy)*.85f*breathe);
+      float x=cx+(g_points[e][i][0]*eye_scale+dx)*.85f*breathe;
+      float y=cy+(mid+(g_points[e][i][1]-mid)*open*eye_scale+dy)*.85f*breathe;
+      x=x<0?0:(x>AV-1?AV-1:x); y=y<0?0:(y>AV-1?AV-1:y);
+      pts[e][i][0]=x; pts[e][i][1]=y;
+      if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y;
     }
-    // Strip triangulation follows the paired sides of the upstream eye contours.
-    int lo=0,hi=47; bool left=true;
-    while(hi-lo>1){ tri.p[0]=points[lo]; tri.p[1]=points[hi];
-      tri.p[2]=left?points[++lo]:points[--hi]; left=!left; lv_draw_triangle(layer,&tri); }
   }
+  int x0=(int)minx, x1=(int)maxx+1, y0=(int)miny, y1=(int)maxy+1; if(x1>AV-1)x1=AV-1; if(y1>AV-1)y1=AV-1;
+  for(int y=y0;y<=y1;y++) memset(g_mask+y*AV,0,AV);
+  for(int e=0;e<2;e++) raster_eye((const float(*)[2])pts[e],48,y0,y1);
+  lv_draw_image_dsc_t img; lv_draw_image_dsc_init(&img);
+  g_mask_img.data=g_mask+y0*AV; g_mask_img.header.h=(uint32_t)(y1-y0+1); g_mask_img.data_size=AV*g_mask_img.header.h;
+  img.src=&g_mask_img; img.recolor=lv_color_hex(0x1C1C1B); img.recolor_opa=LV_OPA_COVER;
+  lv_area_t ia={bounds.x1,bounds.y1+y0,bounds.x1+AV-1,bounds.y1+y1};
+  (void)x0; lv_draw_image(layer,&img,&ia);
 }
 static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_OBJ_FLAG_HIDDEN)) return;
   g_now=lv_tick_get(); const gw_aora_cfg_t* cfg=&gw_aora_cfg[g_st];
@@ -94,6 +129,15 @@ static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_
 void gw_grok_create(lv_obj_t* parent){
   g_root=lv_obj_create(parent); lv_obj_remove_style_all(g_root); lv_obj_set_size(g_root,466,466); lv_obj_center(g_root); lv_obj_remove_flag(g_root,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   g_st=0; g_lvl=0; g_now=lv_tick_get(); g_pool_at=g_now; g_pool_pos=0; target_eye(true);
+  if(!g_mask){
+#ifdef ESP_PLATFORM
+    g_mask=heap_caps_malloc(AV*AV,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+#else
+    g_mask=malloc(AV*AV);
+#endif
+    if(g_mask){ memset(g_mask,0,AV*AV); g_mask_img.header.magic=LV_IMAGE_HEADER_MAGIC; g_mask_img.header.cf=LV_COLOR_FORMAT_A8;
+      g_mask_img.header.w=AV; g_mask_img.header.stride=AV; }
+  }
   g_avatar=lv_obj_create(g_root); lv_obj_remove_style_all(g_avatar); lv_obj_set_size(g_avatar,220,220);
   lv_obj_align(g_avatar,LV_ALIGN_CENTER,0,-30); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(g_avatar,draw_avatar,LV_EVENT_DRAW_MAIN,NULL);

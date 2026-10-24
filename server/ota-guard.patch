@@ -1,0 +1,42 @@
+--- a/core/api/ota_handler.py	2026-10-25 02:39:05
++++ b/core/api/ota_handler.py	2026-10-25 02:39:05
+@@ -12,6 +12,7 @@
+ from core.auth import AuthManager
+ from core.utils.util import get_local_ip, get_vision_url
+ from core.api.base_handler import BaseHandler
++from core.api.ota_guard import OtaGuard
+ 
+ TAG = __name__
+ 
+@@ -56,6 +57,7 @@
+ 
+         # firmware storage
+         self.bin_dir = os.path.join(os.getcwd(), "data", "bin")
++        self.ota_guard = OtaGuard(os.path.join(os.getcwd(), "data", "ota_guard.json"))
+         # cache structure: { 'updated_at': timestamp, 'ttl': seconds, 'files_by_model': { model: [(version, filename), ...] } }
+         self._bin_cache: Dict = {
+             "updated_at": 0,
+@@ -311,8 +313,15 @@
+                 chosen_version = device_version
+ 
+                 # candidates are sorted descending by version
++                try:
++                    self.ota_guard.observe(device_id, device_version, data_json)
++                except Exception as e:
++                    self.logger.bind(tag=TAG).error(f"OTA guard observe failed: {e}")
+                 for ver, fname in candidates:
+                     if _is_higher_version(ver, device_version):
++                        if not self.ota_guard.allow(device_id, ver):
++                            self.logger.bind(tag=TAG).warning(f"OTA guard: {ver} failed on {device_id} before, not offering")
++                            continue
+                         # build download url (only allow download via our download endpoint)
+                         chosen_version = ver
+                         # Use get_vision_url to get the base URL and replace the path
+@@ -324,6 +333,7 @@
+                         break
+ 
+                 if chosen_url:
++                    self.ota_guard.record_offer(device_id, chosen_version)
+                     return_json["firmware"]["version"] = chosen_version
+                     return_json["firmware"]["url"] = chosen_url
+                     self.logger.bind(tag=TAG).info(
