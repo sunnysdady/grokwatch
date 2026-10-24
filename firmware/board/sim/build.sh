@@ -6,7 +6,7 @@ set -e
 # -m32: build 32-bit like the ESP32 (cbin_font assumes 32-bit pointers; 64-bit segfaults)
 HERE=$(cd "$(dirname "$0")" && pwd); B=$(cd "$HERE/.." && pwd); ROOT=$(cd "$B/../../../.." && pwd)
 MC=$ROOT/managed_components; LV=$MC/lvgl__lvgl; FT=$MC/78__xiaozhi-fonts
-OUT=${1:-$HERE/out}; W=${SIM_WORK:-$HERE/.work}; CC="${CC:-cc} -m32"; CF="-O1 -w -I$HERE -I$B -I$FT/include -I$LV -DLV_CONF_INCLUDE_SIMPLE -DLV_LVGL_H_INCLUDE_SIMPLE"
+OUT=${1:-$HERE/out}; W=${SIM_WORK:-$HERE/.work}; if [ -n "$SIM64" ]; then CC="${CC:-cc}"; X=-DGW_SIM_NO_CBIN; else CC="${CC:-cc} -m32"; X=; fi; CF="-O1 -w $X -I$HERE -I$B -I$FT/include -I$LV -DLV_CONF_INCLUDE_SIMPLE -DLV_LVGL_H_INCLUDE_SIMPLE"
 for d in "$LV/src" "$FT/cbin/font_noto_sans_common_30_4.bin"; do [ -e "$d" ] || { echo "missing $d — run idf.py reconfigure first"; exit 1; }; done
 mkdir -p "$W/lv" "$OUT"
 if [ ! -f "$W/liblv.a" ]; then echo "building LVGL..."; n=0

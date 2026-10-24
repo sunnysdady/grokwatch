@@ -88,7 +88,12 @@ int main(int argc,char**argv){
   d=lv_display_create(W,W); static uint8_t buf[W*W*2]; lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_DIRECT); lv_display_set_flush_cb(d,flush);
   lv_indev_t* in=lv_indev_create(); lv_indev_set_type(in,LV_INDEV_TYPE_POINTER); lv_indev_set_read_cb(in,indev_read);
   const char* fp=GW_FONT_BIN; /* absolute path injected by build.sh (-DGW_FONT_BIN=...) */ FILE* ff=fopen(fp,"rb"); if(!ff){ fprintf(stderr,"font not found: %s (run build.sh)\n",fp); return 1; } fseek(ff,0,SEEK_END); long n=ftell(ff); rewind(ff); uint8_t* fbn=malloc(n); fread(fbn,1,n,ff); fclose(ff);
-  lv_font_t* noto=cbin_font_create(fbn); lv_obj_t* scr=lv_screen_active(); lv_obj_set_style_bg_color(scr,lv_color_black(),0); lv_obj_set_style_text_font(scr,noto,0); lv_obj_set_style_text_color(scr,lv_color_white(),0);
+#ifdef GW_SIM_NO_CBIN   /* 64-bit hosts (arm64 Mac): cbin fonts need 32-bit pointers; use the built-in 20 px CJK font */
+  LV_FONT_DECLARE(gz_20); (void)fbn; lv_font_t* noto=(lv_font_t*)&gz_20;
+#else
+  lv_font_t* noto=cbin_font_create(fbn);
+#endif
+  lv_obj_t* scr=lv_screen_active(); lv_obj_set_style_bg_color(scr,lv_color_black(),0); lv_obj_set_style_text_font(scr,noto,0); lv_obj_set_style_text_color(scr,lv_color_white(),0);
   lv_obj_t* cont=lv_obj_create(scr); lv_obj_remove_style_all(cont); lv_obj_set_size(cont,W,W); lv_obj_set_style_bg_opa(cont,255,0); lv_obj_set_style_bg_color(cont,lv_color_black(),0);
   gw_faces_set_fallback(noto); gw_faces_set_fade(false); gw_faces_create(scr); lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE); lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,NULL);
   cc.bright=60; cc.volume=60; tick=1000000;
@@ -157,6 +162,14 @@ int main(int argc,char**argv){
       bool ok=page==cs[c].exp_page && x0*cs[c].sign>0 && xmid*cs[c].sign>=0 && abs(xmid)<abs(x0) && xe==0;
       printf("%s swipe %s -> page %d: x start %d mid %d end %d\n",ok?"AUDIT OK":"AUDIT FAIL",cs[c].n,page,x0,xmid,xe); fails+=!ok; }
     perf("slide anim"); printf("AUDIT swipe direction fails: %d\n",fails); }
+  // 8c) night pass over every core page (same model state as the day shots)
+  gw_grok_visible(false); night=true; gw_faces_set_night(true); gw_faces_create(lv_screen_active());
+  go(1,1); shot("n_face"); speed(23.4f); go(2,1); shot("n_ride");
+  nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0);
+  td_n=3; td_open=2; td_state=1; td_text[0]="买水"; td_text[1]="给车胎打气"; td_text[2]="周日骑行路线"; td_done[0]=false; td_done[1]=false; td_done[2]=true;
+  go(GW_PAGE_TODO,1); shot("n_todo"); td_n=0; td_open=0; render(); shot("n_todo_empty");
+  gw_grok_visible(true); gw_grok_state(0); shot("n_grok_idle"); gw_grok_visible(false);
+  night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); page=1; render();
   // 9) Standby clock (day, night, minute drift)
   gw_grok_visible(false); go(1,1); gw_standby_create(lv_layer_top());
   gw_standby_set(10,9,0); gw_standby_show(true); shot("standby");

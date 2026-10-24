@@ -113,8 +113,8 @@ int gw_faces_page_x(void){ return (cur>0&&cur<GW_NPAGES&&pg[cur])?lv_obj_get_x(p
 void gw_faces_create(lv_obj_t* parent){
   if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); root=NULL; cur=-1; }
   // chat-page decoration sits right above the native container (index 1), under xiaozhi's emoji/status labels
-  chat=box(parent); lv_obj_move_to_index(chat,1); bezel(chat,0,true);
-  c_time=label(chat,&gu_sm,K_ORG,0,-168); lv_obj_set_style_text_letter_space(c_time,1,0);
+  chat=box(parent); lv_obj_move_to_index(chat,1);
+  c_time=label(chat,&gu_sm,K_ORG,0,-192); lv_obj_set_style_text_letter_space(c_time,1,0);  // -192: clear of the Grok status line (-152)
   root=box(parent); lv_obj_set_style_bg_color(root,lv_color_black(),0); lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
   for(int i=1;i<GW_NPAGES;i++){ pg[i]=box(root); lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN); }
   // ---- FACE: Wayfinder bezel + bold numerals + 3 circular complications
@@ -124,8 +124,8 @@ void gw_faces_create(lv_obj_t* parent){
   f_time=label(p,&gu_hero,K_TXT,0,-22); lv_obj_set_style_text_letter_space(f_time,-4,0);
   f_g[0]=gauge(p,-100,100,K_GRN,&f_gv[0]); f_g[1]=gauge(p,0,112,K_ORG,&f_gv[1]); f_g[2]=gauge(p,100,100,K_CYAN,&f_gv[2]);
   f_glink2=arc(p,84,7,K_CARD2,K_BLUE); lv_obj_align(f_glink2,LV_ALIGN_CENTER,100,100); lv_obj_set_style_arc_opa(f_glink2,LV_OPA_TRANSP,LV_PART_MAIN);
-  // ---- RIDE: speed dial bezel 0-60 + orange sweep
-  p=pg[GW_PAGE_RIDE]; bezel(p,1,false);
+  // ---- RIDE: orange speed sweep (minute ring lives on FACE only)
+  p=pg[GW_PAGE_RIDE];
   r_arc=arc(p,360,12,K_CARD,K_ORG); lv_obj_center(r_arc);
   lv_obj_t* h=label(p,&gu_lab,K_ORG,0,-112); lv_label_set_text(h,"RIDE"); lv_obj_set_style_text_letter_space(h,3,0);
   lv_obj_t* hb=label(p,&gu_sm,K_ORG,0,-144); lv_label_set_text(hb,I_BIKE);
@@ -134,7 +134,7 @@ void gw_faces_create(lv_obj_t* parent){
   for(int i=0;i<2;i++){ int x=i?66:-66; r_f[i]=label(p,&gu_sm,K_TXT,x,94); r_fl[i]=label(p,&gu_lab,K_SEC,x,124); lv_label_set_text(r_fl[i],i?"KM":"TIME"); lv_obj_set_style_text_letter_space(r_fl[i],2,0); }
   r_hint=label(p,F20,K_SEC,0,158); lv_label_set_text(r_hint,"打开 GrokWatch App");
   // ---- TODO: voice to-do list (Ultra style). Up to 5 rows, tap = check off.
-  p=pg[GW_PAGE_TODO]; bezel(p,0,true);
+  p=pg[GW_PAGE_TODO];
   t_head=label(p,F21,K_ORG,0,-162);
   for(int i=0;i<GW_TODO_ROWS;i++){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); t_row[i]=c; lv_obj_set_size(c,i==0||i==4?296:336,48);
     lv_obj_align(c,LV_ALIGN_CENTER,0,-112+i*54); lv_obj_set_style_bg_color(c,col(K_CARD),0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_radius(c,25,0);
@@ -147,8 +147,9 @@ void gw_faces_create(lv_obj_t* parent){
   t_empty[0]=disc(p,112,K_CARD); lv_obj_align(t_empty[0],LV_ALIGN_CENTER,0,-40);
   t_empty[1]=lv_label_create(t_empty[0]); lv_obj_set_style_text_font(t_empty[1],&gu_icon,0); lv_obj_set_style_text_color(t_empty[1],col(K_ORG),0); lv_label_set_text(t_empty[1],I_MIC); lv_obj_center(t_empty[1]);
   t_empty[2]=label(p,F20,K_SEC,0,62); lv_obj_set_width(t_empty[2],300); lv_obj_set_style_text_align(t_empty[2],LV_TEXT_ALIGN_CENTER,0);
-  // ---- NAV: compass bezel + big turn arrow
-  p=pg[GW_PAGE_NAV]; bezel(p,2,false);
+  // ---- NAV: big turn arrow
+  p=pg[GW_PAGE_NAV];
+  v_has=false;  // new image object: force the cached arrow to be re-applied (night toggle recreates pages mid-nav)
   v_img=lv_image_create(p); lv_obj_align(v_img,LV_ALIGN_CENTER,0,-84); lv_image_set_scale(v_img,640);
   lv_obj_set_style_image_recolor(v_img,col(K_TXT),0); lv_obj_set_style_image_recolor_opa(v_img,LV_OPA_COVER,0);
   v_dist=label(p,&gu_num,K_TXT,0,24); lv_obj_set_style_text_letter_space(v_dist,-1,0);
