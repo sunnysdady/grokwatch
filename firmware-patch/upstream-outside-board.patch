@@ -1266,10 +1266,19 @@ index 6d0643c..1c035b7 100644
          .hres = static_cast<uint32_t>(width_),
          .vres = static_cast<uint32_t>(height_),
 diff --git a/main/display/lvgl_display/lvgl_display.cc b/main/display/lvgl_display/lvgl_display.cc
-index 12a887e..82fb7fd 100644
 --- a/main/display/lvgl_display/lvgl_display.cc
 +++ b/main/display/lvgl_display/lvgl_display.cc
-@@ -70,6 +70,9 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
+@@ -50,6 +50,9 @@
+     }
+
+     DisplayLockGuard lock(this);
++    if (!lock) {
++        return false;
++    }
+     auto& theme_manager = LvglThemeManager::GetInstance();
+     auto light_theme = theme_manager.GetTheme("light");
+     auto dark_theme = theme_manager.GetTheme("dark");
+@@ -70,6 +73,9 @@
      if (current_theme_ != nullptr) {
          SetTheme(current_theme_);
      }
@@ -1279,24 +1288,35 @@ index 12a887e..82fb7fd 100644
      previous_light_font.reset();
      previous_dark_font.reset();
      return true;
+@@ -111,6 +117,9 @@
+         return;
+     }
+     DisplayLockGuard lock(this);
++    if (!lock) {
++        return;
++    }
+     dynamic_glyph_cache_->Clear();
+ }
+
 diff --git a/main/display/lvgl_display/lvgl_display.h b/main/display/lvgl_display/lvgl_display.h
-index 465e020..ee7a6c6 100644
 --- a/main/display/lvgl_display/lvgl_display.h
 +++ b/main/display/lvgl_display/lvgl_display.h
-@@ -33,7 +33,13 @@ public:
+@@ -33,7 +33,15 @@
      virtual bool SetTextFont(std::shared_ptr<LvglFont> text_font) override;
      virtual bool SupportsGuiOperations() const override { return true; }
- 
+
 +    // Called (under the display lock) after SetTextFont() rebinds the theme and BEFORE the previous
 +    // font is released, so code holding raw lv_font_t* (e.g. as a .fallback) can re-point them.
 +    using TextFontChangedCallback = void (*)(const lv_font_t* new_font);
++    // Register during UI initialization while holding this display's lock.
++    // The callback must not retain the new font beyond its next replacement.
 +    static void SetTextFontChangedCallback(TextFontChangedCallback cb) { text_font_changed_cb_ = cb; }
 +
  protected:
 +    static inline TextFontChangedCallback text_font_changed_cb_ = nullptr;
      esp_pm_lock_handle_t pm_lock_ = nullptr;
      lv_display_t* display_ = nullptr;
- 
+
 diff --git a/sdkconfig.ble b/sdkconfig.ble
 new file mode 100644
 index 0000000..77ae2a0

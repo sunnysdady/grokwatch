@@ -79,7 +79,6 @@ index 1ae6bda..9b3e71f 100644
  extern "C" void gw_console_start(void){}
  #endif
 diff --git a/main/boards/m5stack/stopwatch/nav_ui.cc b/main/boards/m5stack/stopwatch/nav_ui.cc
-index 2b39dda..d0af232 100644
 --- a/main/boards/m5stack/stopwatch/nav_ui.cc
 +++ b/main/boards/m5stack/stopwatch/nav_ui.cc
 @@ -12,6 +12,7 @@
@@ -90,7 +89,7 @@ index 2b39dda..d0af232 100644
  #include "audio/audio_codec.h"
  #include "backlight.h"
  #include "settings.h"
-@@ -98,9 +99,15 @@ static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_ac
+@@ -98,9 +99,15 @@
  static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
    if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
    else if(c==LV_EVENT_RELEASED){ if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
@@ -98,7 +97,7 @@ index 2b39dda..d0af232 100644
 +// builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
 +// lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,
 +// before the old font is released).
-+static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_invalidate(lv_screen_active()); }
++static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_report_style_change(nullptr); }
  static void build_ui(){
    lv_obj_t* scr=lv_screen_active();
    { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
@@ -106,6 +105,35 @@ index 2b39dda..d0af232 100644
    gw_faces_set_fallback(lv_obj_get_style_text_font(scr,LV_PART_MAIN)); gw_faces_set_night(night); gw_faces_set_fade(false); gw_faces_create(scr);
    lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
    lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);
+@@ -108,7 +115,7 @@
+   gw_standby_create(lv_layer_top());
+   lv_timer_create(tick_cb,1000,nullptr); built=true;
+   gw_faces_set_todo_cb([](int row){ GwTodoCheck(row); if(haptic) haptic(15); render(); });
+-  GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(page==GW_PAGE_TODO) render(); }); });
++  GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; if(page==GW_PAGE_TODO) render(); }); });
+   { Settings s("gw",false); fps_log=s.GetInt("fpslog",0)!=0; }
+   lv_display_add_event_cb(lv_display_get_default(),frame_start_cb,LV_EVENT_REFR_START,nullptr);
+   lv_display_add_event_cb(lv_display_get_default(),frame_cb,LV_EVENT_REFR_READY,nullptr); lv_timer_create(fps_cb,2000,nullptr); fr_t0=now_us();
+@@ -126,16 +133,16 @@
+   s.nav_icon=gw_m.has_icon?gw_m.icon:nullptr; s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
+   gw_faces_show(page,&s);
+ }
+-static void refresh(){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); render(); }
++static void refresh(){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; render(); }
+ // BLE host task -> copy -> main task (under the display lock) -> model -> UI
+ extern "C" void gw_on_write(const uint8_t* d,uint16_t n){
+   if(!n) return;
+   if(GW_RX_LOG){ int i=0; while(i+3<=n){ int l=d[i+1]|d[i+2]<<8; if(d[i]!=0x20) ESP_LOGI(TAG,"rx type=%02x len=%d",d[i],l); i+=3+l; } }
+   std::string buf((const char*)d,n);
+-  Application::GetInstance().Schedule([buf](){ DisplayLockGuard g(Board::GetInstance().GetDisplay());
++  Application::GetInstance().Schedule([buf](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return;
+     apply(gw_model_rx((const uint8_t*)buf.data(),(int)buf.size(),now_us())); });
+ }
+-static void sched(std::function<void()> f){ Application::GetInstance().Schedule([f](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); f(); }); }
++static void sched(std::function<void()> f){ Application::GetInstance().Schedule([f](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; f(); }); }
+ void NavUiToggle(){ sched([](){ go(page+1,1); }); }
+ void NavUiNext(){ NavUiToggle(); }
+ void NavUiHome(){ sched([](){ gw_cc_open(nullptr,nullptr); gw_faces_sheet(nullptr,nullptr); if(page!=1) go(1,-1); }); }
 diff --git a/main/boards/m5stack/stopwatch/sim/repro_font_uaf.c b/main/boards/m5stack/stopwatch/sim/repro_font_uaf.c
 new file mode 100644
 index 0000000..d03e5b1
@@ -152,10 +180,19 @@ index 0000000..d03e5b1
 +  return 0;
 +}
 diff --git a/main/display/lvgl_display/lvgl_display.cc b/main/display/lvgl_display/lvgl_display.cc
-index 12a887e..82fb7fd 100644
 --- a/main/display/lvgl_display/lvgl_display.cc
 +++ b/main/display/lvgl_display/lvgl_display.cc
-@@ -70,6 +70,9 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
+@@ -50,6 +50,9 @@
+     }
+
+     DisplayLockGuard lock(this);
++    if (!lock) {
++        return false;
++    }
+     auto& theme_manager = LvglThemeManager::GetInstance();
+     auto light_theme = theme_manager.GetTheme("light");
+     auto dark_theme = theme_manager.GetTheme("dark");
+@@ -70,6 +73,9 @@
      if (current_theme_ != nullptr) {
          SetTheme(current_theme_);
      }
@@ -165,21 +202,32 @@ index 12a887e..82fb7fd 100644
      previous_light_font.reset();
      previous_dark_font.reset();
      return true;
+@@ -111,6 +117,9 @@
+         return;
+     }
+     DisplayLockGuard lock(this);
++    if (!lock) {
++        return;
++    }
+     dynamic_glyph_cache_->Clear();
+ }
+
 diff --git a/main/display/lvgl_display/lvgl_display.h b/main/display/lvgl_display/lvgl_display.h
-index 465e020..ee7a6c6 100644
 --- a/main/display/lvgl_display/lvgl_display.h
 +++ b/main/display/lvgl_display/lvgl_display.h
-@@ -33,7 +33,13 @@ public:
+@@ -33,7 +33,15 @@
      virtual bool SetTextFont(std::shared_ptr<LvglFont> text_font) override;
      virtual bool SupportsGuiOperations() const override { return true; }
- 
+
 +    // Called (under the display lock) after SetTextFont() rebinds the theme and BEFORE the previous
 +    // font is released, so code holding raw lv_font_t* (e.g. as a .fallback) can re-point them.
 +    using TextFontChangedCallback = void (*)(const lv_font_t* new_font);
++    // Register during UI initialization while holding this display's lock.
++    // The callback must not retain the new font beyond its next replacement.
 +    static void SetTextFontChangedCallback(TextFontChangedCallback cb) { text_font_changed_cb_ = cb; }
 +
  protected:
 +    static inline TextFontChangedCallback text_font_changed_cb_ = nullptr;
      esp_pm_lock_handle_t pm_lock_ = nullptr;
      lv_display_t* display_ = nullptr;
- 
+

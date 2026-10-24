@@ -103,7 +103,7 @@ static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_
 // builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
 // lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,
 // before the old font is released).
-static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_invalidate(lv_screen_active()); }
+static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_report_style_change(nullptr); }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
@@ -115,7 +115,7 @@ static void build_ui(){
   gw_standby_create(lv_layer_top());
   lv_timer_create(tick_cb,1000,nullptr); built=true;
   gw_faces_set_todo_cb([](int row){ GwTodoCheck(row); if(haptic) haptic(15); render(); });
-  GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(page==GW_PAGE_TODO) render(); }); });
+  GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; if(page==GW_PAGE_TODO) render(); }); });
   { Settings s("gw",false); fps_log=s.GetInt("fpslog",0)!=0; }
   lv_display_add_event_cb(lv_display_get_default(),frame_start_cb,LV_EVENT_REFR_START,nullptr);
   lv_display_add_event_cb(lv_display_get_default(),frame_cb,LV_EVENT_REFR_READY,nullptr); lv_timer_create(fps_cb,2000,nullptr); fr_t0=now_us();
@@ -133,16 +133,16 @@ static void render(){
   s.nav_icon=gw_m.has_icon?gw_m.icon:nullptr; s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
   gw_faces_show(page,&s);
 }
-static void refresh(){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); render(); }
+static void refresh(){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; render(); }
 // BLE host task -> copy -> main task (under the display lock) -> model -> UI
 extern "C" void gw_on_write(const uint8_t* d,uint16_t n){
   if(!n) return;
   if(GW_RX_LOG){ int i=0; while(i+3<=n){ int l=d[i+1]|d[i+2]<<8; if(d[i]!=0x20) ESP_LOGI(TAG,"rx type=%02x len=%d",d[i],l); i+=3+l; } }
   std::string buf((const char*)d,n);
-  Application::GetInstance().Schedule([buf](){ DisplayLockGuard g(Board::GetInstance().GetDisplay());
+  Application::GetInstance().Schedule([buf](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return;
     apply(gw_model_rx((const uint8_t*)buf.data(),(int)buf.size(),now_us())); });
 }
-static void sched(std::function<void()> f){ Application::GetInstance().Schedule([f](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); f(); }); }
+static void sched(std::function<void()> f){ Application::GetInstance().Schedule([f](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; f(); }); }
 void NavUiToggle(){ sched([](){ go(page+1,1); }); }
 void NavUiNext(){ NavUiToggle(); }
 void NavUiHome(){ sched([](){ gw_cc_open(nullptr,nullptr); gw_faces_sheet(nullptr,nullptr); if(page!=1) go(1,-1); }); }
