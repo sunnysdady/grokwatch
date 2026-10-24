@@ -1,0 +1,19 @@
+--- a/core/http_server.py
++++ b/core/http_server.py
+@@ -3,6 +3,7 @@
+ from config.logger import setup_logging
+ from core.api.ota_handler import OTAHandler
+ from core.api.vision_handler import VisionHandler
++from plugins_func.functions.gw_todo import add_todo_routes
+ 
+ TAG = __name__
+ 
+@@ -75,6 +76,8 @@
+                     ]
+                 )
+ 
++                add_todo_routes(app)
++
+                 # 运行服务
+                 runner = web.AppRunner(app)
+                 await runner.setup()

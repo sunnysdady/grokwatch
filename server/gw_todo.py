@@ -86,13 +86,24 @@ def add_todo(text=None):
     return ActionResponse(Action.RESPONSE, None, f"记好了：{it['text']}。现在有 {n} 条待办。")
 
 
+def _limit(req):
+    try:
+        n = int(req.query.get("n", "5"))
+    except ValueError:
+        raise web.HTTPBadRequest(text="n must be an integer")
+    if not 1 <= n <= MAX_OPEN:
+        raise web.HTTPBadRequest(text="n must be between 1 and 50")
+    return n
+
+
 async def _get(req):
-    return web.json_response(watch_view(int(req.query.get("n", 5))))
+    return web.json_response(watch_view(_limit(req)))
 
 
 async def _done(req):
+    limit = _limit(req)  # Validate before changing stored data.
     set_done(req.query.get("id", ""), req.query.get("v", "1") != "0")
-    return web.json_response(watch_view(int(req.query.get("n", 5))))
+    return web.json_response(watch_view(limit))
 
 
 def add_todo_routes(app):
