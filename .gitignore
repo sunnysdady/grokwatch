@@ -1,0 +1,13 @@
+**/build/
+.gradle/
+.kotlin/
+local.properties
+*.jks
+*.keystore
+keystore.properties
+firmware/board/secrets_gen.h
+*.bin
+.env
+*.apk
+*.aab
+*.elf

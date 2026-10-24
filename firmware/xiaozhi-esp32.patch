@@ -1,0 +1,39 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3b9df7e..e9d306b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.5.3")
++set(PROJECT_VER "2.6.1")
+ project(xiaozhi)
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index be3f5cb..e3eabdd 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -1155,7 +1155,7 @@ idf_component_register(SRCS ${SOURCES}
+                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                     WHOLE_ARCHIVE
+-                    PRIV_REQUIRES
++                    PRIV_REQUIRES bt
+                         esp_pm
+                         esp_psram
+                         esp_netif
+diff --git a/main/display/lcd_display.cc b/main/display/lcd_display.cc
+index 6d0643c..1c035b7 100644
+--- a/main/display/lcd_display.cc
++++ b/main/display/lcd_display.cc
+@@ -177,8 +177,8 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
+         .io_handle = panel_io_,
+         .panel_handle = panel_,
+         .control_handle = nullptr,
+-        .buffer_size = static_cast<uint32_t>(width_ * 20),
+-        .double_buffer = false,
++        .buffer_size = static_cast<uint32_t>(width_ * 16),
++        .double_buffer = true,   // [GrokWatch] render next strip while previous one is on the QSPI bus
+         .trans_size = 0,
+         .hres = static_cast<uint32_t>(width_),
+         .vres = static_cast<uint32_t>(height_),

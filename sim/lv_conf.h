@@ -1,0 +1,23 @@
+#ifndef LV_CONF_H
+#define LV_CONF_H
+#define LV_USE_FONT_COMPRESSED 1
+#define LV_COLOR_DEPTH 16
+#define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
+#define LV_MEM_SIZE (8*1024*1024)
+#define LV_USE_OS LV_OS_NONE
+#define LV_DRAW_SW_SUPPORT_RGB565 1
+#define LV_FONT_FMT_TXT_LARGE 1
+#define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
+#define LV_USE_FS_STDIO 1
+#define LV_FS_STDIO_LETTER 'A'
+#define LV_FS_STDIO_PATH ""
+#define LV_FS_STDIO_CACHE_SIZE 0
+#define LV_USE_SCALE 1
+#define LV_USE_ARC 1
+#define LV_USE_FLEX 1
+#define LV_USE_LOG 0
+#define LV_USE_SNAPSHOT 0
+#define LV_USE_THEME_DEFAULT 1
+#define LV_THEME_DEFAULT_DARK 1
+#endif

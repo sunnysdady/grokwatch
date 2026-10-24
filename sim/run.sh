@@ -1,0 +1,2 @@
+gcc -m32 -O1 -w -o sim3 sim3.c ../firmware/board/gw_ultra.c ../firmware/board/gw_grok.c ../firmware/board/gw_model.c obj3/*.o $XIAOZHI/managed_components/78__xiaozhi-fonts/src/cbin_font.c -I. -I../firmware/board -I$XIAOZHI/managed_components/78__xiaozhi-fonts/include -I$XIAOZHI/managed_components/lvgl__lvgl -DLV_CONF_INCLUDE_SIMPLE -DLV_LVGL_H_INCLUDE_SIMPLE liblv.a -lm 2>&1 | head -5
+O=./rc6.1-sim; rm -rf $O; mkdir -p $O; ./sim3 $O 2>&1 | grep -E "MISSING|AUDIT|haptic|PERF"; /usr/bin/python3 mkimg.py $O
