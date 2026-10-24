@@ -4,10 +4,10 @@
 #include "gw_faces.h"
 #include <stdio.h>
 #include <string.h>
-LV_FONT_DECLARE(gu_hero) LV_FONT_DECLARE(gu_num) LV_FONT_DECLARE(gu_sm) LV_FONT_DECLARE(gu_lab) LV_FONT_DECLARE(gu_icon) LV_FONT_DECLARE(gz_20) LV_FONT_DECLARE(gz_21b)
+LV_FONT_DECLARE(gu_hero) LV_FONT_DECLARE(gu_num) LV_FONT_DECLARE(gu_sm) LV_FONT_DECLARE(gu_lab) LV_FONT_DECLARE(gu_icon) LV_FONT_DECLARE(gz_20)
 // RAM copies of the compact CJK fonts so a runtime fallback (full CJK font) can cover rare characters
 static lv_font_t f20_rt, f21_rt; static bool f_init=false;
-const lv_font_t* gw_f20(void){ if(!f_init){ f20_rt=gz_20; f21_rt=gz_21b; f_init=true; } return &f20_rt; }
+const lv_font_t* gw_f20(void){ if(!f_init){ f20_rt=gz_20; f21_rt=gz_20; /* size: gz_21b (408 KB) dropped, see docs/BUILD.md */ f_init=true; } return &f20_rt; }
 const lv_font_t* gw_f21(void){ gw_f20(); return &f21_rt; }
 void gw_faces_set_fallback(const lv_font_t* f){ gw_f20(); f20_rt.fallback=f; f21_rt.fallback=f; }
 #define F20 gw_f20()
@@ -31,19 +31,19 @@ void gw_faces_set_fallback(const lv_font_t* f){ gw_f20(); f20_rt.fallback=f; f21
 // palette (watchOS dark): pure black, international orange accent
 enum { K_TXT=0xFFFFFF, K_SEC=0x8E8E93, K_TER=0x3A3A3C, K_CARD=0x1C1C1E, K_CARD2=0x2C2C2E, K_ORG=0xFF6A13, K_GRN=0x30D158, K_RED=0xFF453A, K_CYAN=0x64D2FF, K_BLUE=0x0A84FF, K_YEL=0xFFD60A };
 static bool night=false, fade=true;
+// Night: like iPhone StandBy at night -- not red. Low-saturation warm white at ~55 % level; accents keep a hint of hue.
 static lv_color_t col(uint32_t h){ if(!night) return lv_color_hex(h);
-  int r=(h>>16)&255,g=(h>>8)&255,b=h&255; int l=r>g?r:g; if(b>l) l=b; if(h==K_CARD||h==K_CARD2) l=l*7/10; return lv_color_make(l,0,0); }
+  int r=(h>>16)&255,g=(h>>8)&255,b=h&255; int l=(r*77+g*150+b*29)>>8;
+  int R=(r*3+l*7)/10, G=(g*3+l*7)/10, B=(b*3+l*7)/10;            // 70 % desaturate
+  return lv_color_make(R*56/100, G*52/100, B*46/100); }           // dim + slightly warm white
 
-static lv_obj_t *root,*pg[GW_NPAGES],*dotbar,*dots[GW_NPAGES],*chat,*sheet,*sheet_t,*sheet_b;
+static lv_obj_t *root,*pg[GW_NPAGES],*dotbar,*dots[GW_NCORE],*chat,*sheet,*sheet_t,*sheet_b;
 static int cur=-1, dir=1;
 // face
 static lv_obj_t *f_sec,*f_date,*f_time,*f_g[3],*f_gv[3],*f_glink2;
 // ride
 static lv_obj_t *r_arc,*r_speed,*r_unit,*r_f[2],*r_fl[2],*r_hint;
-// notes
-#define NROW 5   // rows kept small: each row is ~8 LVGL objects in internal RAM
-static lv_obj_t *n_more2,*n_list,*n_head,*n_row[NROW],*n_ico[NROW],*n_icl[NROW],*n_app[NROW],*n_tm[NROW],*n_t[NROW],*n_b[NROW],*n_empty[3];
-static const gw_note_t* n_src; static int n_cnt;
+// modal sheet (power menu, ride summary)
 static lv_obj_t *sh_scroll,*sh_app,*sh_t,*sh_b;
 static lv_obj_t *cc,*cc_tile[GW_CC_N],*cc_ic[GW_CC_N],*cc_lb[GW_CC_N],*cc_val[GW_CC_N],*cc_stat; static void (*cc_cb)(int);
 // nav
@@ -91,7 +91,10 @@ static void bezel(lv_obj_t* p,int mode,bool dim){
 static lv_obj_t* gauge(lv_obj_t* p,int x,int y,uint32_t c,lv_obj_t** val){ lv_obj_t* g=arc(p,84,7,K_CARD2,c); lv_obj_align(g,LV_ALIGN_CENTER,x,y);
   *val=label(p,&gu_sm,K_TXT,x,y); return g; }
 static void sheet_click(lv_event_t* e){ (void)e; gw_faces_sheet(NULL,NULL); }
-static void card_click(lv_event_t* e){ int i=(int)(intptr_t)lv_event_get_user_data(e); if(n_src&&i<n_cnt) gw_faces_note_open(i); }
+static lv_obj_t *t_head,*t_row[GW_TODO_ROWS],*t_box[GW_TODO_ROWS],*t_txt[GW_TODO_ROWS],*t_more,*t_empty[3];
+static void (*todo_cb)(int)=NULL;
+void gw_faces_set_todo_cb(void (*f)(int)){ todo_cb=f; }
+static void todo_click(lv_event_t* e){ int i=(int)(intptr_t)lv_event_get_user_data(e); if(todo_cb) todo_cb(i); }
 // app -> icon/colour (Chinese app labels as sent by the phone)
 static void app_style(const char* a,const char** ic,uint32_t* c){ *ic=I_MSG; *c=K_ORG;
   if(strstr(a,"微信")||strstr(a,"WeChat")){ *ic=I_WX; *c=K_GRN; }
@@ -103,7 +106,9 @@ static void cc_click(lv_event_t* e){ int i=(int)(intptr_t)lv_event_get_user_data
 static void cc_bg_click(lv_event_t* e){ (void)e; }
 void gw_faces_set_night(bool on){ night=on; }
 void gw_faces_set_fade(bool on){ fade=on; }
+static bool slide_on=true; void gw_faces_set_slide(bool on){ slide_on=on; }
 void gw_faces_dir(int d){ dir=d<0?-1:1; }
+int gw_faces_page_x(void){ return (cur>0&&cur<GW_NPAGES&&pg[cur])?lv_obj_get_x(pg[cur]):0; }
 
 void gw_faces_create(lv_obj_t* parent){
   if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); root=NULL; cur=-1; }
@@ -128,32 +133,20 @@ void gw_faces_create(lv_obj_t* parent){
   r_unit=label(p,&gu_lab,K_SEC,0,42); lv_label_set_text(r_unit,"KM/H"); lv_obj_set_style_text_letter_space(r_unit,3,0);
   for(int i=0;i<2;i++){ int x=i?66:-66; r_f[i]=label(p,&gu_sm,K_TXT,x,94); r_fl[i]=label(p,&gu_lab,K_SEC,x,124); lv_label_set_text(r_fl[i],i?"KM":"TIME"); lv_obj_set_style_text_letter_space(r_fl[i],2,0); }
   r_hint=label(p,F20,K_SEC,0,158); lv_label_set_text(r_hint,"打开 GrokWatch App");
-  // ---- NOTES: compact scrolling list (3-4 rows visible inside the round safe area)
-  p=pg[GW_PAGE_NOTES];
-  n_list=lv_obj_create(p); lv_obj_remove_style_all(n_list); lv_obj_set_size(n_list,350,466); lv_obj_center(n_list);
-  lv_obj_set_flex_flow(n_list,LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(n_list,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_top(n_list,58,0); lv_obj_set_style_pad_bottom(n_list,96,0); lv_obj_set_style_pad_row(n_list,8,0);
-  lv_obj_set_scroll_dir(n_list,LV_DIR_VER); lv_obj_set_scrollbar_mode(n_list,LV_SCROLLBAR_MODE_OFF); lv_obj_add_flag(n_list,LV_OBJ_FLAG_SCROLL_MOMENTUM);
-  n_head=lv_label_create(n_list); lv_obj_set_style_text_font(n_head,F21,0); lv_obj_set_style_text_color(n_head,col(K_ORG),0);
-  for(int i=0;i<NROW;i++){ lv_obj_t* c=lv_obj_create(n_list); lv_obj_remove_style_all(c); n_row[i]=c; lv_obj_set_size(c,320,LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(c,col(K_CARD),0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_radius(c,22,0);
-    lv_obj_set_style_pad_all(c,12,0); lv_obj_set_style_pad_left(c,58,0); lv_obj_remove_flag(c,LV_OBJ_FLAG_SCROLLABLE); lv_obj_add_flag(c,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLL_CHAIN_VER|LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_flex_flow(c,LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(c,1,0);
-    lv_obj_add_event_cb(c,card_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
-    n_ico[i]=disc(c,36,K_ORG); lv_obj_add_flag(n_ico[i],LV_OBJ_FLAG_IGNORE_LAYOUT); lv_obj_align(n_ico[i],LV_ALIGN_TOP_LEFT,-46,0);
-    n_icl[i]=lv_label_create(n_ico[i]); lv_obj_set_style_text_font(n_icl[i],&gu_sm,0); lv_obj_set_style_text_color(n_icl[i],lv_color_black(),0); lv_obj_center(n_icl[i]);
-    lv_obj_t* top=lv_obj_create(c); lv_obj_remove_style_all(top); lv_obj_set_size(top,LV_PCT(100),LV_SIZE_CONTENT); lv_obj_remove_flag(top,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
-    n_app[i]=lv_label_create(top); lv_obj_set_style_text_font(n_app[i],F20,0); lv_obj_set_style_text_color(n_app[i],col(K_SEC),0);
-    lv_obj_set_width(n_app[i],180); lv_label_set_long_mode(n_app[i],LV_LABEL_LONG_CLIP);
-    n_tm[i]=lv_label_create(top); lv_obj_set_style_text_font(n_tm[i],F20,0); lv_obj_set_style_text_color(n_tm[i],col(K_SEC),0); lv_obj_align(n_tm[i],LV_ALIGN_TOP_RIGHT,0,0);
-    n_t[i]=lv_label_create(c); lv_obj_set_style_text_font(n_t[i],F21,0); lv_obj_set_style_text_color(n_t[i],col(K_TXT),0);
-    lv_obj_set_width(n_t[i],LV_PCT(100)); lv_label_set_long_mode(n_t[i],LV_LABEL_LONG_DOT); lv_obj_set_height(n_t[i],28);
-    n_b[i]=lv_label_create(c); lv_obj_set_style_text_font(n_b[i],F20,0); lv_obj_set_style_text_color(n_b[i],col(0xC7C7CC),0);
-    lv_obj_set_width(n_b[i],LV_PCT(100)); lv_label_set_long_mode(n_b[i],LV_LABEL_LONG_DOT); }
-  n_more2=lv_label_create(n_list); lv_obj_set_style_text_font(n_more2,F20,0); lv_obj_set_style_text_color(n_more2,col(K_SEC),0);
-  n_empty[0]=disc(p,128,K_CARD); lv_obj_align(n_empty[0],LV_ALIGN_CENTER,0,-46);
-  n_empty[1]=lv_label_create(n_empty[0]); lv_obj_set_style_text_font(n_empty[1],&gu_icon,0); lv_obj_set_style_text_color(n_empty[1],col(K_SEC),0); lv_label_set_text(n_empty[1],I_BELL); lv_obj_center(n_empty[1]);
-  n_empty[2]=label(p,F21,K_SEC,0,64); lv_label_set_text(n_empty[2],"没有新通知");
+  // ---- TODO: voice to-do list (Ultra style). Up to 5 rows, tap = check off.
+  p=pg[GW_PAGE_TODO]; bezel(p,0,true);
+  t_head=label(p,F21,K_ORG,0,-162);
+  for(int i=0;i<GW_TODO_ROWS;i++){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); t_row[i]=c; lv_obj_set_size(c,i==0||i==4?296:336,48);
+    lv_obj_align(c,LV_ALIGN_CENTER,0,-112+i*54); lv_obj_set_style_bg_color(c,col(K_CARD),0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_radius(c,25,0);
+    lv_obj_add_flag(c,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_GESTURE_BUBBLE); lv_obj_remove_flag(c,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(c,todo_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
+    t_box[i]=disc(c,26,K_CARD); lv_obj_set_style_border_width(t_box[i],3,0); lv_obj_set_style_border_color(t_box[i],col(K_ORG),0); lv_obj_align(t_box[i],LV_ALIGN_LEFT_MID,14,0);
+    t_txt[i]=lv_label_create(c); lv_obj_set_style_text_font(t_txt[i],F20,0); lv_obj_set_style_text_color(t_txt[i],col(K_TXT),0);
+    lv_obj_set_width(t_txt[i],lv_obj_get_style_width(c,0)-66); lv_label_set_long_mode(t_txt[i],LV_LABEL_LONG_DOT); lv_obj_set_height(t_txt[i],28); lv_obj_align(t_txt[i],LV_ALIGN_LEFT_MID,52,1); }
+  t_more=label(p,F20,K_SEC,0,150);
+  t_empty[0]=disc(p,112,K_CARD); lv_obj_align(t_empty[0],LV_ALIGN_CENTER,0,-40);
+  t_empty[1]=lv_label_create(t_empty[0]); lv_obj_set_style_text_font(t_empty[1],&gu_icon,0); lv_obj_set_style_text_color(t_empty[1],col(K_ORG),0); lv_label_set_text(t_empty[1],I_MIC); lv_obj_center(t_empty[1]);
+  t_empty[2]=label(p,F20,K_SEC,0,62); lv_obj_set_width(t_empty[2],300); lv_obj_set_style_text_align(t_empty[2],LV_TEXT_ALIGN_CENTER,0);
   // ---- NAV: compass bezel + big turn arrow
   p=pg[GW_PAGE_NAV]; bezel(p,2,false);
   v_img=lv_image_create(p); lv_obj_align(v_img,LV_ALIGN_CENTER,0,-84); lv_image_set_scale(v_img,640);
@@ -168,7 +161,7 @@ void gw_faces_create(lv_obj_t* parent){
   dotbar=lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(dotbar); lv_obj_set_size(dotbar,140,12); lv_obj_align(dotbar,LV_ALIGN_CENTER,0,184);
   lv_obj_set_flex_flow(dotbar,LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(dotbar,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(dotbar,7,0); lv_obj_remove_flag(dotbar,LV_OBJ_FLAG_CLICKABLE);
-  for(int i=0;i<GW_NPAGES;i++){ dots[i]=disc(dotbar,7,K_TER); lv_obj_set_style_radius(dots[i],4,0); }
+  for(int i=0;i<GW_NCORE;i++){ dots[i]=disc(dotbar,7,K_TER); lv_obj_set_style_radius(dots[i],4,0); }
   // ---- modal sheet: full-screen, scrollable (expanded notification / summaries / confirms)
   sheet=box(parent); lv_obj_set_style_bg_color(sheet,lv_color_black(),0); lv_obj_set_style_bg_opa(sheet,LV_OPA_COVER,0);
   lv_obj_add_flag(sheet,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_HIDDEN); lv_obj_add_event_cb(sheet,sheet_click,LV_EVENT_CLICKED,NULL);
@@ -200,12 +193,9 @@ void gw_faces_sheet(const char* t,const char* b){ if(!sheet) return; if(!t&&!b){
   lv_label_set_text(sh_app,""); lv_obj_add_flag(sh_app,LV_OBJ_FLAG_HIDDEN);
   lv_label_set_text(sh_t,t?t:""); lv_obj_set_style_text_color(sh_t,col(K_ORG),0); lv_label_set_text(sh_b,b?b:"");
   lv_obj_scroll_to_y(sh_scroll,0,LV_ANIM_OFF); lv_obj_remove_flag(sheet,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sheet); }
-void gw_faces_note_open(int i){ if(!n_src||i<0||i>=n_cnt) return; const gw_note_t* n=&n_src[i];
-  char b[64]; snprintf(b,sizeof b,"%s  \xC2\xB7  %s",n->app,n->time); lv_label_set_text(sh_app,b); lv_obj_remove_flag(sh_app,LV_OBJ_FLAG_HIDDEN);
-  lv_label_set_text(sh_t,n->title[0]?n->title:n->app); lv_obj_set_style_text_color(sh_t,col(K_TXT),0); lv_label_set_text(sh_b,n->body);
-  lv_obj_scroll_to_y(sh_scroll,0,LV_ANIM_OFF); lv_obj_remove_flag(sheet,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sheet); }
+
 static const gw_cc_t* cc_st;
-void gw_cc_open(const gw_cc_t* st,void (*on_tap)(int)){ if(!cc) return; if(!st){ lv_obj_add_flag(cc,LV_OBJ_FLAG_HIDDEN); return; }
+void gw_cc_open(const gw_cc_t* st,void (*on_tap)(int)){ if(!cc) return; if(st&&dotbar){ lv_anim_delete(dotbar,NULL); lv_obj_set_style_opa(dotbar,0,0); } if(!st){ lv_obj_add_flag(cc,LV_OBJ_FLAG_HIDDEN); return; }
   cc_cb=on_tap; cc_st=st; char b[96];
   snprintf(b,sizeof b,"%s%d%%  ·  %s  ·  手机 %s",st->charging?"充电 ":"",st->battery,st->ble&&st->wifi?"蓝牙 Wi-Fi":(st->ble?"蓝牙":(st->wifi?"Wi-Fi":"未连接")),st->phone_batt>=0?"":"--");
   if(st->phone_batt>=0){ size_t l=strlen(b); snprintf(b+l,sizeof b-l,"%d%%",st->phone_batt); }
@@ -221,6 +211,7 @@ bool gw_faces_sheet_open(void){ return sheet&&!lv_obj_has_flag(sheet,LV_OBJ_FLAG
 
 // ---------- animations ----------
 static void ax_x(void* o,int32_t v){ lv_obj_set_x((lv_obj_t*)o,v); }
+static void ax_y(void* o,int32_t v){ lv_obj_set_y((lv_obj_t*)o,v); }
 static void ax_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
 static void ax_w(void* o,int32_t v){ lv_obj_set_width((lv_obj_t*)o,v); }
 static void anim(void* o,lv_anim_exec_xcb_t cb,int32_t a,int32_t b,uint32_t ms,uint32_t delay,lv_anim_path_cb_t path){
@@ -238,15 +229,17 @@ void gw_faces_show(int page, const gw_state_t* s){
   if(!root) return;
   bool enter=page!=cur; int prev=cur; cur=page;
   if(enter){ // dots: capsule morph + transient visibility
-    for(int i=0;i<GW_NPAGES;i++){ bool on=i==page; int w=lv_obj_get_width(dots[i]);
+    for(int i=0;i<GW_NCORE;i++){ bool on=i==page; int w=lv_obj_get_width(dots[i]);
       lv_obj_set_style_bg_color(dots[i],col(on?K_ORG:K_TER),0); anim(dots[i],ax_w,w,on?24:7,160,0,NULL); }
-    lv_obj_move_foreground(dotbar); anim(dotbar,ax_opa,LV_OPA_COVER,LV_OPA_COVER,1,0,NULL); anim(dotbar,ax_opa,LV_OPA_COVER,0,400,1600,lv_anim_path_ease_in_out);
+    lv_obj_move_foreground(dotbar); { anim(dotbar,ax_opa,LV_OPA_COVER,LV_OPA_COVER,1,0,NULL); anim(dotbar,ax_opa,LV_OPA_COVER,0,400,1600,lv_anim_path_ease_in_out); }
   }
   if(page==GW_PAGE_CHAT){ lv_obj_add_flag(root,LV_OBJ_FLAG_HIDDEN); char b[8]; snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(c_time,b); return; }
   lv_obj_remove_flag(root,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(root);
   if(enter){ for(int i=1;i<GW_NPAGES;i++) (i==page)?lv_obj_remove_flag(pg[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t* o=pg[page]; int off=(prev<0||!fade)?0:40*dir;
-    lv_obj_set_x(o,0); lv_obj_set_style_opa(o,LV_OPA_COVER,0); if(off){ anim(o,ax_x,off,0,200,0,NULL); }
+    lv_obj_t* o=pg[page]; // Horizontal slide ALWAYS (fade flag only chose slide+fade vs slide-only, but used to disable the slide entirely,
+    // so the swap was painted by the 16-line strip flush top->bottom and read as a vertical flip). +dir = enter from right.
+    int off=prev<0?0:GW_SLIDE_PX*dir;
+    lv_obj_set_x(o,0); lv_obj_set_style_opa(o,LV_OPA_COVER,0); lv_obj_set_y(o,0); if(off&&slide_on){ lv_obj_set_x(o,off); anim(o,ax_x,off,0,GW_SLIDE_MS,0,NULL); }
     prog=1000; /* no sweep on enter: one crisp full redraw (sweeps cost ~120ms/frame over QSPI) */ dir=1; }
   char b[96]; static const char* WE[]={"SUN","MON","TUE","WED","THU","FRI","SAT"};
   if(page==GW_PAGE_FACE){
@@ -257,8 +250,10 @@ void gw_faces_show(int page, const gw_state_t* s){
     lv_obj_set_style_arc_color(f_g[0],col(bc),LV_PART_INDICATOR);
     if(prog>=1000){ arc_set(f_g[0],135,270,t_bat); snprintf(b,sizeof b,"%d",s->battery); lv_label_set_text(f_gv[0],b); }
     lv_obj_set_style_text_color(f_gv[0],col(s->battery<=20?K_RED:K_TXT),0);
-    arc_set(f_g[1],135,270,s->n_notes>0?(s->n_notes>=3?1.f:s->n_notes/3.f):0);
-    snprintf(b,sizeof b,I_BELL "%d",s->n_notes); lv_label_set_text(f_gv[1],b); lv_obj_set_style_text_color(f_gv[1],col(s->n_notes?K_ORG:K_SEC),0);
+    // middle gauge: phone battery (notifications were removed in 2.6.2)
+    arc_set(f_g[1],135,270,s->phone_batt>=0?s->phone_batt/100.f:0);
+    if(s->phone_batt>=0) snprintf(b,sizeof b,"%d",s->phone_batt); else snprintf(b,sizeof b,"--"); lv_label_set_text(f_gv[1],b);
+    lv_obj_set_style_text_color(f_gv[1],col(s->phone_batt>=0?K_TXT:K_SEC),0);
     // link: left half = Wi-Fi, right half = phone BLE
     arc_set(f_g[2],135,132,s->wifi?1:0); lv_arc_set_bg_angles(f_g[2],135,405);
     lv_arc_set_bg_angles(f_glink2,273,405); if(s->ble){ lv_obj_set_style_arc_opa(f_glink2,LV_OPA_COVER,LV_PART_INDICATOR); lv_arc_set_angles(f_glink2,273,405);} else lv_obj_set_style_arc_opa(f_glink2,LV_OPA_TRANSP,LV_PART_INDICATOR);
@@ -274,21 +269,18 @@ void gw_faces_show(int page, const gw_state_t* s){
     else { snprintf(b,sizeof b,"%.1f",s->ride_km); lv_label_set_text(r_f[1],b); lv_label_set_text(r_fl[1],"KM"); }
     lv_label_set_text(r_hint,s->ble?"等待手机 GPS":"打开 GrokWatch App"); lv_obj_set_style_text_color(r_hint,col(s->ble?K_SEC:K_ORG),0);
     has?lv_obj_add_flag(r_hint,LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(r_hint,LV_OBJ_FLAG_HIDDEN);
-  } else if(page==GW_PAGE_NOTES){
-    bool any=s->n_notes>0; n_src=s->notes; n_cnt=s->n_notes;
-    snprintf(b,sizeof b,"通知  %d",s->n_notes); lv_label_set_text(n_head,b);
-    for(int i=0;i<NROW;i++){ if(i<s->n_notes){ const gw_note_t* n=&s->notes[i]; const char* ic; uint32_t c; app_style(n->app,&ic,&c);
-        lv_label_set_text(n_icl[i],ic); lv_obj_set_style_bg_color(n_ico[i],col(c),0);
-        lv_label_set_text(n_app[i],n->app); lv_label_set_text(n_tm[i],n->time);
-        if(n->title[0]){ lv_label_set_text(n_t[i],n->title); lv_obj_remove_flag(n_t[i],LV_OBJ_FLAG_HIDDEN); lv_obj_set_height(n_b[i],26); }
-        else { lv_obj_add_flag(n_t[i],LV_OBJ_FLAG_HIDDEN); lv_obj_set_height(n_b[i],52); }
-        lv_label_set_text(n_b[i],n->body[0]?n->body:" "); lv_obj_remove_flag(n_row[i],LV_OBJ_FLAG_HIDDEN); }
-      else lv_obj_add_flag(n_row[i],LV_OBJ_FLAG_HIDDEN); }
-    if(s->n_notes>NROW){ snprintf(b,sizeof b,"还有 %d 条较早的通知",s->n_notes-NROW); lv_label_set_text(n_more2,b); lv_obj_remove_flag(n_more2,LV_OBJ_FLAG_HIDDEN); }
-    else lv_obj_add_flag(n_more2,LV_OBJ_FLAG_HIDDEN);
-    if(enter) lv_obj_scroll_to_y(n_list,0,LV_ANIM_OFF);
-    for(int i=0;i<3;i+=2) any?lv_obj_add_flag(n_empty[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(n_empty[i],LV_OBJ_FLAG_HIDDEN);
-    any?lv_obj_remove_flag(n_list,LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(n_list,LV_OBJ_FLAG_HIDDEN);
+  } else if(page==GW_PAGE_TODO){
+    bool any=s->n_todo>0;
+    if(s->todo_state==2&&!any) snprintf(b,sizeof b,"待办 · 离线"); else if(s->todo_state==1&&!any) snprintf(b,sizeof b,"待办 · 同步中"); else if(s->todo_open) snprintf(b,sizeof b,"待办  %d",s->todo_open); else snprintf(b,sizeof b,"待办");
+    lv_label_set_text(t_head,b);
+    for(int i=0;i<GW_TODO_ROWS;i++){ if(i<s->n_todo){ bool d=s->todo_done[i];
+        lv_label_set_text(t_txt[i],s->todo_text[i]?s->todo_text[i]:""); lv_obj_set_style_text_color(t_txt[i],col(d?K_SEC:K_TXT),0);
+        lv_obj_set_style_text_decor(t_txt[i],d?LV_TEXT_DECOR_STRIKETHROUGH:LV_TEXT_DECOR_NONE,0);
+        lv_obj_set_style_bg_color(t_box[i],col(d?K_ORG:K_CARD),0); lv_obj_remove_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
+      else lv_obj_add_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
+    if(s->todo_open>s->n_todo){ snprintf(b,sizeof b,"还有 %d 条",s->todo_open-s->n_todo); lv_label_set_text(t_more,b); lv_obj_remove_flag(t_more,LV_OBJ_FLAG_HIDDEN);} else lv_obj_add_flag(t_more,LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(t_empty[2],s->todo_state==2?"连不上服务器\n检查 Wi-Fi":"按蓝键说\n「记一下…」");
+    for(int i=0;i<3;i+=2) any?lv_obj_add_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_NAV){
     lv_obj_t* act[]={v_img,v_dist,v_dir,v_meta};
     for(int i=0;i<4;i++) s->nav_active?lv_obj_remove_flag(act[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(act[i],LV_OBJ_FLAG_HIDDEN);
@@ -311,3 +303,70 @@ void gw_faces_show(int page, const gw_state_t* s){
       lv_label_set_text(v_idle[3],s->ble?"START IN AMAP / MAPS":"OPEN GROKWATCH APP"); }
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Standby clock (screen idle): hours over minutes, vector-drawn rounded digits (no font asset),
+// 26 px round-capped strokes, tabular. Day: pale mint #E8EFC4; night: col() dims it to warm white.
+// Fits the 215 px safe radius of the 466 round panel. Anti burn-in: whole block steps along an
+// 8-point +-6 px orbit once per minute. Motion: 280 ms ease-out fade on enter, 200 ms re-light on minute change.
+#include <math.h>
+#define SB_H 1.30f                     /* digit centre-line box: 1 wide x SB_H tall */
+#define SB_DW 118
+#define SB_DH 160
+#define SB_SW 26
+#define SB_GX 12
+#define SB_GY 16
+typedef struct { char t; float a,b,c,d,e; } sb_prim;   /* 'L' x1 y1 x2 y2 | 'A' cx cy r a0 a1 (deg, 0=3 o'clock, clockwise) */
+static sb_prim sb_g[10][5]; static bool sb_ready=false;
+static float sb_tangent(float cx,float cy,float r,float px,float py,int side){ /* angle (deg) of the tangent point seen from P */
+  float dx=px-cx,dy=py-cy,dd=sqrtf(dx*dx+dy*dy); float a=atan2f(dy,dx)+side*acosf(r/dd); return a*57.29578f; }
+static void sb_setup(void){
+  float H=SB_H; int k;
+  /* 0 */ sb_prim g0[]={{'A',.5,.5,.5,180,360},{'A',.5,H-.5,.5,0,180},{'L',0,.5,0,H-.5},{'L',1,.5,1,H-.5},{0}};
+  /* 1 */ sb_prim g1[]={{'L',.6,0,.6,H},{'L',.6,0,.2,.3},{0}};
+  /* 2: top bowl runs into the diagonal at its exact tangent point */
+  float t2=sb_tangent(.5,.47,.47,0,H,-1); while(t2<180) t2+=360; float x2=.5f+.47f*cosf(t2/57.29578f), y2=.47f+.47f*sinf(t2/57.29578f);
+  sb_prim g2[]={{'A',.5,.47,.47,180,t2},{'L',x2,y2,0,H},{'L',0,H,1,H},{0}};
+  /* 3 */ sb_prim g3[]={{'A',.5,.30,.30,195,450},{'A',.5,H-.40,.40,270,520},{0}};
+  /* 4: gentler diagonal */ sb_prim g4[]={{'L',.74,0,.74,H},{'L',.66,0,0,.86},{'L',0,.86,1,.86},{0}};
+  /* 5: stem ends exactly where the bowl starts */
+  float a5=212, x5=.5f+.46f*cosf(a5/57.29578f), y5=(H-.46f)+.46f*sinf(a5/57.29578f);
+  sb_prim g5[]={{'L',.92,0,x5+.02f,0},{'L',x5+.02f,0,x5,y5},{'A',.5,H-.46f,.46,a5,510},{0}};
+  /* 6: ascender leaves the bowl at its tangent */
+  float t6=sb_tangent(.5,H-.5,.5,.62,0,-1); float x6=.5f+.5f*cosf(t6/57.29578f), y6=(H-.5f)+.5f*sinf(t6/57.29578f);
+  sb_prim g6[]={{'A',.5,H-.5,.5,0,360},{'L',x6,y6,.62,0},{0}};
+  /* 7 */ sb_prim g7[]={{'L',0,0,1,0},{'L',1,0,.36,H},{0}};
+  /* 8: two stacked bowls that just touch (top one narrower) */ sb_prim g8[]={{'A',.5,.28,.28,0,360},{'A',.5,H-.37f,.37,0,360},{0}};
+  /* 9: tail leaves the bowl at its tangent and stays inside the box */
+  float t9=sb_tangent(.5,.5,.5,.38,H,-1); float x9=.5f+.5f*cosf(t9/57.29578f), y9=.5f+.5f*sinf(t9/57.29578f);
+  sb_prim g9[]={{'A',.5,.5,.5,0,360},{'L',x9,y9,.38,H},{0}};
+  sb_prim* all[10]={g0,g1,g2,g3,g4,g5,g6,g7,g8,g9};
+  for(int d=0;d<10;d++){ for(k=0;all[d][k].t;k++) sb_g[d][k]=all[d][k]; sb_g[d][k].t=0; } sb_ready=true; }
+static lv_obj_t *sb; static char sb_txt[5]="0000"; static int sb_ox=0, sb_oy=0;
+static void sb_glyph(lv_layer_t* L,int dg,float x,float y,lv_color_t c,lv_opa_t opa){
+  lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld); ld.color=c; ld.width=SB_SW; ld.round_start=ld.round_end=1; ld.opa=opa;
+  lv_draw_arc_dsc_t ad; lv_draw_arc_dsc_init(&ad); ad.color=c; ad.width=SB_SW; ad.rounded=1; ad.opa=opa;
+  float sx=SB_DW-SB_SW, sy=(SB_DH-SB_SW)/SB_H, s=sx<sy?sx:sy, ox=x+SB_SW/2.f+(SB_DW-SB_SW-s)/2, oy=y+SB_SW/2.f;
+  for(int i=0;sb_g[dg][i].t;i++){ const sb_prim* q=&sb_g[dg][i];
+    if(q->t=='L'){ ld.p1.x=ox+q->a*s; ld.p1.y=oy+q->b*s; ld.p2.x=ox+q->c*s; ld.p2.y=oy+q->d*s; lv_draw_line(L,&ld); }
+    else { ad.center.x=ox+q->a*s; ad.center.y=oy+q->b*s; ad.radius=(uint16_t)(q->c*s+SB_SW/2.f); ad.start_angle=q->d; ad.end_angle=q->e; lv_draw_arc(L,&ad); } } }
+static void sb_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t a; lv_obj_get_coords(sb,&a);
+  float cx=(a.x1+a.x2)/2.f+sb_ox, cy=(a.y1+a.y2)/2.f+sb_oy, x0=cx-(2*SB_DW+SB_GX)/2.f, y0=cy-(2*SB_DH+SB_GY)/2.f;
+  lv_color_t c=col(0xE8EFC4); lv_opa_t opa=lv_obj_get_style_opa_recursive(sb,0);
+  for(int r=0;r<2;r++) for(int k=0;k<2;k++) sb_glyph(L,sb_txt[r*2+k]-'0',x0+k*(SB_DW+SB_GX),y0+r*(SB_DH+SB_GY),c,opa); }
+static const signed char sb_orbit[8][2]={{0,0},{5,-3},{6,3},{2,6},{-3,5},{-6,1},{-5,-4},{-1,-6}};
+void gw_standby_create(lv_obj_t* parent){ if(!sb_ready) sb_setup();
+  sb=lv_obj_create(parent); lv_obj_remove_style_all(sb); lv_obj_set_size(sb,466,466); lv_obj_center(sb);
+  lv_obj_set_style_bg_color(sb,lv_color_black(),0); lv_obj_set_style_bg_opa(sb,LV_OPA_COVER,0);
+  lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(sb,LV_OBJ_FLAG_SCROLLABLE); lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(sb,sb_draw,LV_EVENT_DRAW_MAIN_END,NULL); }
+bool gw_standby_is_on(void){ return sb&&!lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN); }
+static void sb_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
+static void sb_fade(int from,int ms){ lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,sb); lv_anim_set_exec_cb(&a,sb_opa);
+  lv_anim_set_values(&a,from,LV_OPA_COVER); lv_anim_set_duration(&a,ms); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
+void gw_standby_show(bool on){ if(!sb) return; if(on){ lv_obj_remove_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sb); sb_fade(0,280); } else lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); }
+void gw_standby_set(int hh,int mm,uint32_t minute_count){
+  if(!sb) return; char b[5]={(char)('0'+(hh/10)%10),(char)('0'+hh%10),(char)('0'+(mm/10)%10),(char)('0'+mm%10),0}; if(hh<0||mm<0) return;
+  bool changed=strcmp(b,sb_txt)!=0; memcpy(sb_txt,b,5);
+  const signed char* o=sb_orbit[minute_count%8]; sb_ox=o[0]; sb_oy=o[1];
+  if(changed&&gw_standby_is_on()) sb_fade(LV_OPA_40,200); lv_obj_invalidate(sb); }

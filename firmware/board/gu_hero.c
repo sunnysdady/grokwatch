@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 124 px
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --size 124 --font ./ufonts/IT700.ttf -r 0x30-0x3A,0x2D --format lvgl --lv-include lvgl.h -o ../firmware/board/gu_hero.c --lv-font-name gu_hero
+ * Opts: --no-compress --no-prefilter --bpp 4 --size 124 --font /workspace/m5-xiaozhi-grok/ufonts/IT700.ttf -r 0x30-0x3A,0x2D --format lvgl --lv-include lvgl.h -o /workspace/xiaozhi-esp32/main/boards/m5stack/stopwatch/gu_hero.c --lv-font-name gu_hero
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

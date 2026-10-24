@@ -1,0 +1,1 @@
+upstream 78/xiaozhi-esp32 base: 39d23aee5b8682f77bbdf9cdc66799456b5ad408 ; GrokWatch HEAD 6549020bf2f40432bef10a0bac23d4afcd7a43ca (2.6.4) + uncommitted gw_console.cc fix

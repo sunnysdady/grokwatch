@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 19 px
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --size 19 --font ./ufonts/IT800.ttf -r 0x20-0x7E --format lvgl --lv-include lvgl.h -o ../firmware/board/gu_lab.c --lv-font-name gu_lab
+ * Opts: --no-compress --no-prefilter --bpp 4 --size 19 --font /workspace/m5-xiaozhi-grok/ufonts/IT800.ttf -r 0x20-0x7E --format lvgl --lv-include lvgl.h -o /workspace/xiaozhi-esp32/main/boards/m5stack/stopwatch/gu_lab.c --lv-font-name gu_lab
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

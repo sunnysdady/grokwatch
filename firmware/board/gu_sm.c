@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 26 px
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --size 26 --font ./ufonts/IT700.ttf -r 0x20-0x7E,0xB7 --font $XIAOZHI/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff -r 0xF1EB,0xF294,0xF0F3,0xF0E7,0xF206,0xF124,0xF075,0xF017,0xF186,0xF14E,0xF130,0xF185,0xF028,0xF1F6,0xF240,0xF1D7,0xF0E0,0xF095 --format lvgl --lv-include lvgl.h -o ../firmware/board/gu_sm.c --lv-font-name gu_sm
+ * Opts: --no-compress --no-prefilter --bpp 4 --size 26 --font /workspace/m5-xiaozhi-grok/ufonts/IT700.ttf -r 0x20-0x7E,0xB7 --font /workspace/xiaozhi-esp32/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff -r 0xF1EB,0xF294,0xF0F3,0xF0E7,0xF206,0xF124,0xF075,0xF017,0xF186,0xF14E,0xF130,0xF185,0xF028,0xF1F6,0xF240,0xF1D7,0xF0E0,0xF095 --format lvgl --lv-include lvgl.h -o /workspace/xiaozhi-esp32/main/boards/m5stack/stopwatch/gu_sm.c --lv-font-name gu_sm
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

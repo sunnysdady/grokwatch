@@ -8,8 +8,7 @@
             "sdkconfig_append": [
                 "CONFIG_SPIRAM=y",
                 "CONFIG_SPIRAM_MODE_OCT=y",
-                "CONFIG_SPIRAM_SPEED_80M=y",
-                "CONFIG_OTA_URL=\"http://YOUR-OTA-SERVER:8003/xiaozhi/ota/\""
+                "CONFIG_SPIRAM_SPEED_80M=y"
             ]
         }
     ]

@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 60 px
  * Bpp: 4
- * Opts: --no-compress --no-prefilter --bpp 4 --size 60 --font $XIAOZHI/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff -r 0xF294,0xF0F3,0xF206,0xF124,0xF130,0xF075,0xF14E --format lvgl --lv-include lvgl.h -o ../firmware/board/gu_icon.c --lv-font-name gu_icon
+ * Opts: --no-compress --no-prefilter --bpp 4 --size 60 --font /workspace/xiaozhi-esp32/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff -r 0xF294,0xF0F3,0xF206,0xF124,0xF130,0xF075,0xF14E --format lvgl --lv-include lvgl.h -o /workspace/xiaozhi-esp32/main/boards/m5stack/stopwatch/gu_icon.c --lv-font-name gu_icon
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

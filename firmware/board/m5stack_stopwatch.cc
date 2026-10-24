@@ -19,10 +19,21 @@
 
 extern "C" void gw_ble_start(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
-void NavUiSetHaptic(void (*f)(int)); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiPowerMenu(bool show);
+void NavUiSetHaptic(void (*f)(int)); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
+void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void);
 #include <esp_timer.h>
+#include "gw_health.h"
 #include <ssid_manager.h>
+// Optional local Wi-Fi presets (git-ignored). Without it the watch uses normal Wi-Fi provisioning.
+#if __has_include("secrets_gen.h")
 #include "secrets_gen.h"
+#endif
+#ifndef WIFI_HOME_SSID
+#define WIFI_HOME_SSID ""
+#define WIFI_HOME_PASS ""
+#define WIFI_HOT_SSID ""
+#define WIFI_HOT_PASS ""
+#endif
 #include "settings.h"
 #define TAG "M5StackStopwatch"
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
@@ -364,7 +375,7 @@ private:
             return;
         }
         const lvgl_port_touch_cfg_t touch_cfg = {.disp = lv_display_get_default(), .handle = tp};
-        lvgl_port_add_touch(&touch_cfg);
+        NavUiSetTouchIndev(lvgl_port_add_touch(&touch_cfg));
 
         // taps/swipes are handled in nav_ui.cc (swipe = pages, tap = chat only on the chat page)
         ESP_LOGI(TAG, "Touch ready");
@@ -375,17 +386,23 @@ private:
         power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
         power_save_timer_->OnEnterSleepMode([this]() {
             GetDisplay()->SetChatMessage("system", "");
-            GetDisplay()->SetEmotion("sleepy");
+            NavUiStandby(true);                       // minimal black standby clock (AMOLED: black = off pixels)
             GetBacklight()->SetBrightness(10);
         });
         power_save_timer_->OnExitSleepMode([this]() {
-            GetDisplay()->SetEmotion("neutral");
+            NavUiStandby(false);
             GetBacklight()->RestoreBrightness();
         });
         power_save_timer_->SetEnabled(true);
     }
 
 public:
+    // GrokWatch: boot record rides along in the OTA check body (board.gw_boot), readable server-side without serial.
+    std::string GetBoardJson() override {
+        std::string j = WifiBoard::GetBoardJson(); char b[200];
+        if (gw_bootrec_json(gw_bootrec_get(), b, sizeof b) > 0 && !j.empty() && j.back() == '}') { j.pop_back(); j += ",\"gw_boot\":"; j += b; j += "}"; }
+        return j;
+    }
     M5StackStopwatchBoard()
         : i2c_bus_(nullptr),
           button1_(BUTTON1_GPIO),
@@ -401,9 +418,11 @@ public:
         { auto& sm=SsidManager::GetInstance();
           if (sizeof(WIFI_HOT_PASS)>1) sm.AddSsid(WIFI_HOT_SSID, WIFI_HOT_PASS);
           if (sizeof(WIFI_HOME_PASS)>1) sm.AddSsid(WIFI_HOME_SSID, WIFI_HOME_PASS); }
+        gw_health_start();   // OTA: mark new image valid from local boot health (no server needed)
         gw_ble_start();
         NavUiInit();
-        // anti-buzz: PA on only while codec output is enabled
+        gw_console_start();   // USB test console: no-op unless built with GW_TEST_CONSOLE (private/debug builds)
+        // [Sunny] anti-buzz: PA on only while codec output is enabled
         { esp_timer_create_args_t a={}; a.name="pa_gate"; a.arg=this;
           a.callback=[](void* p){ auto* b=(M5StackStopwatchBoard*)p; bool on=b->GetAudioCodec()->output_enabled();
             if(on!=b->pa_on_){ b->pa_on_=on; b->ioe_.digitalWrite(IOE_PIN_PA_EN, on?HIGH:LOW);} };
