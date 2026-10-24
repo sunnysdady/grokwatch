@@ -32,7 +32,11 @@ struct Req { char method[6]; std::string path; };
 static void task(void* a){
   Req* r = (Req*)a; std::string url = base_url() + r->path;
   auto http = Board::GetInstance().GetNetwork()->CreateHttp(0); http->SetTimeout(4000);
-  if(http->Open(r->method, url) && http->GetStatusCode()==200){ parse(http->ReadAll()); } else { gw_todo.state = 2; ESP_LOGW(TAG,"%s %s failed", r->method, r->path.c_str()); }
+  if(http->Open(r->method, url)){
+    auto status = http->GetStatusCode();
+    if(status && *status==200) parse(http->ReadAll());
+    else { gw_todo.state = status && *status==404 ? 3 : 2; ESP_LOGW(TAG,"todo HTTP status=%d",status?*status:-1); }
+  } else { gw_todo.state = 2; ESP_LOGW(TAG,"todo connection failed"); }
   http->Close(); delete r; busy = false; if(done_cb) done_cb(); vTaskDelete(nullptr);
 }
 static void start(const char* m, std::string path){

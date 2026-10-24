@@ -271,7 +271,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     has?lv_obj_add_flag(r_hint,LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(r_hint,LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_TODO){
     bool any=s->n_todo>0;
-    if(s->todo_state==2&&!any) snprintf(b,sizeof b,"待办 · 离线"); else if(s->todo_state==1&&!any) snprintf(b,sizeof b,"待办 · 同步中"); else if(s->todo_open) snprintf(b,sizeof b,"待办  %d",s->todo_open); else snprintf(b,sizeof b,"待办");
+    if(s->todo_state==3&&!any) snprintf(b,sizeof b,"待办 · 未启用"); else if(s->todo_state==2&&!any) snprintf(b,sizeof b,"待办 · 离线"); else if(s->todo_state==1&&!any) snprintf(b,sizeof b,"待办 · 同步中"); else if(s->todo_open) snprintf(b,sizeof b,"待办  %d",s->todo_open); else snprintf(b,sizeof b,"待办");
     lv_label_set_text(t_head,b);
     for(int i=0;i<GW_TODO_ROWS;i++){ if(i<s->n_todo){ bool d=s->todo_done[i];
         lv_label_set_text(t_txt[i],s->todo_text[i]?s->todo_text[i]:""); lv_obj_set_style_text_color(t_txt[i],col(d?K_SEC:K_TXT),0);
@@ -279,7 +279,7 @@ void gw_faces_show(int page, const gw_state_t* s){
         lv_obj_set_style_bg_color(t_box[i],col(d?K_ORG:K_CARD),0); lv_obj_remove_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
       else lv_obj_add_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
     if(s->todo_open>s->n_todo){ snprintf(b,sizeof b,"还有 %d 条",s->todo_open-s->n_todo); lv_label_set_text(t_more,b); lv_obj_remove_flag(t_more,LV_OBJ_FLAG_HIDDEN);} else lv_obj_add_flag(t_more,LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(t_empty[2],s->todo_state==2?"连不上服务器\n检查 Wi-Fi":"按蓝键说\n「记一下…」");
+    lv_label_set_text(t_empty[2],s->todo_state==3?"服务器未启用待办\n请检查服务配置":s->todo_state==2?"连不上服务器\n检查服务与网络":"按蓝键说\n「记一下…」");
     for(int i=0;i<3;i+=2) any?lv_obj_add_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_NAV){
     lv_obj_t* act[]={v_img,v_dist,v_dir,v_meta};
