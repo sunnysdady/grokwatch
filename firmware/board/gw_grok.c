@@ -12,7 +12,7 @@
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
 #endif
-const lv_font_t* gw_f20(void); const lv_font_t* gw_f21(void);
+const lv_font_t* gw_f20(void); const lv_font_t* gw_f21(void); const lv_font_t* gw_f_status(void);
 #define F20 gw_f20()
 #define F21 gw_f21()
 // Original GrokWatch character skin (not the upstream emotion-ball visual): teal page, mint body built
@@ -78,63 +78,51 @@ static void raster_eye(const float (*pt)[2], int n, int y0, int y1){
     for(int x=0;x<AV;x++){ float c=g_cov[x]; int v=(int)(c*255.f+.5f); v=v>255?255:v; if(v>row[x]) row[x]=(uint8_t)v; }
   }
 }
+// Face v2 (Sunny 10/25: no long slit eyes). Parametric and cheap: a few rounded rects + arcs per frame, no mask.
+// Variant 0: soft vertical oval eyes + highlight; 1: round dot eyes + highlight; 2: oval eyes + blush cheeks.
+static int g_var=2;
+void gw_grok_variant(int v){ g_var=v<0?0:(v>2?2:v); if(g_avatar) lv_obj_invalidate(g_avatar); }
+static void fill_rr(lv_layer_t* L,lv_color_t c,lv_opa_t o,int cx,int cy,int w,int h){ lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d);
+  d.radius=LV_RADIUS_CIRCLE; d.bg_color=c; d.bg_opa=o; lv_area_t a={cx-w/2,cy-h/2,cx-w/2+w-1,cy-h/2+h-1}; lv_draw_rect(L,&d,&a); }
+static void arc_(lv_layer_t* L,lv_color_t c,int w,int cx,int cy,int r,int a0,int a1){ lv_draw_arc_dsc_t a; lv_draw_arc_dsc_init(&a);
+  a.color=c; a.width=w; a.rounded=1; a.radius=r; a.center.x=cx; a.center.y=cy; a.start_angle=a0; a.end_angle=a1; lv_draw_arc(L,&a); }
+static float ease(float x){ x=x<0?0:(x>1?1:x); return x*x*(3-2*x); }
 static void draw_avatar(lv_event_t* event){
-  lv_layer_t* layer=lv_event_get_layer(event);
-  lv_area_t bounds; lv_obj_get_coords(g_avatar,&bounds);
-  float breathe=1.0f+.010f*wave(g_now,3600);
-  float bob=g_st==3?2.2f*wave(g_now,1400):(g_st==4?4.0f:0);
-  float cx=110, cy=110+bob;
-  int radius=(int)(100*breathe+.5f);
-  lv_area_t body={bounds.x1+(int32_t)cx-radius,bounds.y1+(int32_t)cy-radius,bounds.x1+(int32_t)cx+radius,bounds.y1+(int32_t)cy+radius};
-  // Two flat tonal discs: a shade disc and the face disc nudged up-left -> a soft crescent of depth
-  // on the lower right. Solid fills only (no gradient), so RGB565 shows no banding.
+  lv_layer_t* L=lv_event_get_layer(event);
+  lv_area_t b; lv_obj_get_coords(g_avatar,&b);
   bool off=g_st==4;
+  float lean=g_st==1?3.f:0;                                  // listening: lean in a touch
+  float bob=g_st==3?1.6f*wave(g_now,1400):(off?2.f*wave(g_now,4200):0);
+  int cx=b.x1+110, cy=b.y1+110+(int)(lean+bob);
+  int R=(int)(98*(1.0f+.008f*wave(g_now,3600))+(g_st==1?2:0));
   lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.radius=LV_RADIUS_CIRCLE; d.bg_opa=LV_OPA_COVER;
-  d.bg_color=lv_color_hex(off?SK->off_shade:SK->shade); lv_draw_rect(layer,&d,&body);
-  lv_area_t face={body.x1+2,body.y1+1,body.x2-9,body.y2-10};
-  d.bg_color=lv_color_hex(off?SK->off_body:SK->body); lv_draw_rect(layer,&d,&face);
-  if(!g_mask) return;
-  float dx=0,dy=0,eye_scale=g_st==4?.88f:1;
-  if(g_st==0){ dx=10*glance(g_now,4800); dy=2*wave(g_now+718,4100); }
-  if(g_st==1) dy=6*wave(g_now,2200);
-  if(g_st==2){ dx=9*wave(g_now,2600); dy=-8; }
-  if(g_st==3) dy=-3+6*glance(g_now,3000);
-  if(g_st==4) dy=12+1.6f*wave(g_now,3600);
-  uint32_t blink=g_now%gw_aora_cfg[g_st].blink_ms;
-  float open=blink<90?1-.94f*blink/90:(blink<200?.06f+.94f*(blink-90)/110:1);
-  static float pts[2][48][2]; float minx=AV,maxx=0,miny=AV,maxy=0;
-  for(int e=0;e<2;e++){
-    float mid=0; for(int i=0;i<48;i++) mid+=g_points[e][i][1]/48;
-    for(int i=0;i<48;i++){
-      float x=cx+(g_points[e][i][0]*eye_scale+dx)*.85f*breathe;
-      float y=cy+(mid+(g_points[e][i][1]-mid)*open*eye_scale+dy)*.85f*breathe;
-      x=x<0?0:(x>AV-1?AV-1:x); y=y<0?0:(y>AV-1?AV-1:y);
-      pts[e][i][0]=x; pts[e][i][1]=y;
-      if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y;
-    }
-  }
-  int x0=(int)minx, x1=(int)maxx+1, y0=(int)miny, y1=(int)maxy+1; if(x1>AV-1)x1=AV-1; if(y1>AV-1)y1=AV-1;
-  for(int y=y0;y<=y1;y++) memset(g_mask+y*AV,0,AV);
-  for(int e=0;e<2;e++) raster_eye((const float(*)[2])pts[e],48,y0,y1);
-  lv_draw_image_dsc_t img; lv_draw_image_dsc_init(&img);
-  g_mask_img.data=g_mask+y0*AV; g_mask_img.header.h=(uint32_t)(y1-y0+1); g_mask_img.data_size=AV*g_mask_img.header.h;
-  img.src=&g_mask_img; img.recolor=lv_color_hex(SK->ink); img.recolor_opa=LV_OPA_COVER;
-  lv_area_t ia={bounds.x1,bounds.y1+y0,bounds.x1+AV-1,bounds.y1+y1};
-  (void)x0; lv_draw_image(layer,&img,&ia);
-  // Mouth: GrokWatch's own five shapes, one small primitive each (arc / ring / line / pill).
-  // Anchored under the eyes so no pose can make them collide; kept inside the lower face.
-  float myf=maxy+(g_st==3?14:20); float lim=cy+radius-30; if(myf>lim) myf=lim;
-  int mx=bounds.x1+(int)((minx+maxx)*.5f), my=bounds.y1+(int)myf;
-  lv_color_t ink=lv_color_hex(SK->ink);
-  if(g_st==0||g_st==4){ lv_draw_arc_dsc_t a; lv_draw_arc_dsc_init(&a); a.color=ink; a.width=7; a.rounded=1; a.radius=19;
-    a.center.x=mx; a.center.y=g_st==0?my-15:my+15; a.start_angle=g_st==0?40:220; a.end_angle=g_st==0?140:320; lv_draw_arc(layer,&a); }
-  else if(g_st==1){ lv_draw_arc_dsc_t a; lv_draw_arc_dsc_init(&a); a.color=ink; a.width=6; a.radius=9;
-    a.center.x=mx; a.center.y=my; a.start_angle=0; a.end_angle=360; lv_draw_arc(layer,&a); }
-  else if(g_st==2){ lv_draw_line_dsc_t l; lv_draw_line_dsc_init(&l); l.color=ink; l.width=6; l.round_start=1; l.round_end=1;
-    l.p1.x=mx-6; l.p1.y=my+1; l.p2.x=mx+14; l.p2.y=my-2; lv_draw_line(layer,&l); }
-  else { float t=wave(g_now,260), u=wave(g_now+90,410); int h=6+(int)(5*(t>0?t:-t)+3*(u>0?u:-u));
-    lv_draw_rect_dsc_t m; lv_draw_rect_dsc_init(&m); m.radius=LV_RADIUS_CIRCLE; m.bg_color=ink; m.bg_opa=LV_OPA_COVER;
-    lv_area_t ma={mx-14,my-h/2,mx+14,my+h/2}; lv_draw_rect(layer,&m,&ma); }
+  d.bg_color=lv_color_hex(off?SK->off_shade:SK->shade); lv_area_t body={cx-R,cy-R,cx+R,cy+R}; lv_draw_rect(L,&d,&body);
+  d.bg_color=lv_color_hex(off?SK->off_body:SK->body); lv_area_t face={cx-R+2,cy-R+1,cx+R-8,cy+R-9}; lv_draw_rect(L,&d,&face);
+  lv_color_t ink=lv_color_hex(SK->ink), hi=lv_color_hex(g_night?0xD9CBB4:0xFFFFFF);
+  int fx=cx-3, fy=cy-5;                                      // optical centre of the lit face disc
+  // gaze
+  float gx=0, gy=0;
+  if(g_st==0){ float p=(float)(g_now%7000)/7000; gx=p<.5f?5*ease((p-.40f)/.06f):5-5*ease((p-.90f)/.06f); }
+  if(g_st==2){ gx=12; gy=-11; }
+  // eye size per variant/state
+  int ew=g_var==1?30:27, eh=g_var==1?30:39; if(g_st==1){ ew+=3; eh+=4; }
+  int sep=g_var==1?32:35, ey=fy-6;
+  uint32_t bk=g_now%4300; float open=bk<70?1-bk/70.f:(bk<160?(bk-70)/90.f:1); if(open<.12f) open=.12f;
+  if(g_st==2) open=open<.85f?open:.85f;
+  if(g_var==2&&!off){ lv_color_t blush=lv_color_mix(lv_color_hex(0xF4A9A0),lv_color_hex(SK->body),g_night?70:110);
+    fill_rr(L,blush,LV_OPA_COVER,fx-sep-20,ey+30,26,14); fill_rr(L,blush,LV_OPA_COVER,fx+sep+20,ey+30,26,14); }
+  for(int k=-1;k<=1;k+=2){ int ex=fx+k*sep+(int)gx, eyy=ey+(int)gy;
+    if(off){ arc_(L,ink,6,ex,eyy-6,11,20,160); continue; }   // asleep: soft closed lids
+    int h=(int)(eh*open); if(h<6) h=6; fill_rr(L,ink,LV_OPA_COVER,ex,eyy,ew,h);
+    if(open>.6f){ int hs=g_var==1?8:7; fill_rr(L,hi,LV_OPA_COVER,ex-ew/2+hs/2+4,eyy-h/2+hs/2+5,hs,hs); } }
+  // mouth
+  int mx=fx+(int)(gx*.5f), my=ey+36+(int)(gy*.3f);
+  if(g_st==0) arc_(L,ink,5,mx,my-6,11,25,155);                       // small smile
+  else if(g_st==1) fill_rr(L,ink,LV_OPA_COVER,mx,my+1,13,11);          // little "o"
+  else if(g_st==2) fill_rr(L,ink,LV_OPA_COVER,mx+8,my+2,14,5);       // small flat "hmm", off to the side
+  else if(g_st==3){ float t=wave(g_now,240), u=wave(g_now+70,390); int h=5+(int)(7*(t>0?t:-t)+4*(u>0?u:-u));
+    fill_rr(L,ink,LV_OPA_COVER,mx,my+2,20,h); }
+  else arc_(L,ink,4,mx,my-4,8,30,150);                                 // asleep: tiny relaxed smile
 }
 static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_OBJ_FLAG_HIDDEN)) return;
   g_now=lv_tick_get(); const gw_aora_cfg_t* cfg=&gw_aora_cfg[g_st];
@@ -169,7 +157,7 @@ void gw_grok_create(lv_obj_t* parent){
   lv_obj_add_event_cb(g_avatar,draw_avatar,LV_EVENT_DRAW_MAIN,NULL);
   for(int i=0;i<7;i++){ g_bar[i]=rect(g_root,7,5,4,SKIN[0].accent); lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN); }
   for(int i=0;i<3;i++){ g_dot[i]=rect(g_root,7,7,4,i==0?0x9A72EE:(i==1?0x5B95F0:0x35C3BD)); lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN); }
-  g_stat=lv_label_create(g_root); lv_obj_set_style_text_font(g_stat,F21,0); lv_obj_set_style_text_color(g_stat,lv_color_hex(SKIN[0].accent),0); lv_obj_align(g_stat,LV_ALIGN_CENTER,0,-152);
+  g_stat=lv_label_create(g_root); lv_obj_set_style_text_font(g_stat,gw_f_status(),0); lv_obj_set_style_text_color(g_stat,lv_color_hex(SKIN[0].accent),0); lv_obj_align(g_stat,LV_ALIGN_CENTER,0,-152);
   // Subtitles: the question is one fixed line (ellipsis); the reply lives in its own 2-line window below it and
   // scrolls so the newest text shows. A long reply can never climb over the question or the character.
   int lh=lv_font_get_line_height(F20);

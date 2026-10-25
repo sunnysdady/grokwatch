@@ -94,14 +94,14 @@ public:
         gw_grok_state(st);
     }
     void SetChatMessage(const char* role, const char* content) override {
-        SpiLcdDisplay::SetChatMessage(role, content);
+        // Never call the stock SetChatMessage: it re-shows bottom_bar_ (the dark bar with a second, larger copy of the
+        // text seen on 2.6.7) and allocates chat bubbles nobody sees. gw_grok is the only subtitle renderer.
         if (!role || !content || (strcmp(role, "user") && strcmp(role, "assistant"))) return;
         DisplayLockGuard lock(this);
         gw_grok_text(role, content);
         if (!strcmp(role, "user") && content[0]) gw_grok_state(2);   // question heard -> thinking until speech starts
     }
     void ClearChatMessages() override {
-        SpiLcdDisplay::ClearChatMessages();
         DisplayLockGuard lock(this);
         gw_grok_text("user", "");
     }
@@ -109,6 +109,7 @@ public:
         SpiLcdDisplay::SetupUI();
         DisplayLockGuard lock(this);
         // Old stock chat UI (robot emoji, orange status, subtitle bar) is never shown: gw_grok owns this page.
+        hide_subtitle_ = true;   // belt and braces: stock code paths that re-show bottom_bar_ check this flag
         { lv_obj_t* old[] = {emoji_box_, status_bar_, bottom_bar_}; for (auto* o : old) if (o) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); }
 
         // Horizontal inset so labels stay inside the round mask

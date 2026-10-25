@@ -149,6 +149,10 @@ int main(int argc,char**argv){
   gw_grok_state(2); shot("grok_thinking");
   gw_grok_state(3); gw_grok_text("assistant","明早深圳多云转阵雨，降雨概率 60%，6 点到 9 点风力 3 级。建议带雨衣，路面湿滑注意刹车距离。"); shot("grok_speaking");
   gw_grok_state(4); gw_grok_status("Grok 离线 · 检查 Wi-Fi"); shot("grok_offline");
+  // face v2 review: 3 variants x 5 states, day + night (subtitles cleared so the face reads alone)
+  gw_grok_text("user",""); for(int n=0;n<2;n++){ gw_grok_set_night(n); for(int v=0;v<3;v++){ gw_grok_variant(v); for(int st=0;st<5;st++){ char nm[40];
+    gw_grok_state(st); step(st==1?400:300); snprintf(nm,sizeof nm,"fv%d_%s_s%d",v,n?"night":"day",st); shot(nm); } } }
+  gw_grok_set_night(false); gw_grok_variant(2);
   // GIFs: listening + thinking loops (30 fps), and a swipe sequence
   flushed=0; st_ms_sum=st_ms_max=0; st_n=0; gw_grok_state(1); gif_n=0; for(int i=0;i<45;i++){ gw_grok_level(30+((i*37)%70)); step(33); gif_frame("listening"); }
   perf("listening anim");

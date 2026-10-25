@@ -6,11 +6,13 @@
 #include <string.h>
 #include <math.h>
 LV_FONT_DECLARE(gu_hero) LV_FONT_DECLARE(gu_num) LV_FONT_DECLARE(gu_sm) LV_FONT_DECLARE(gu_lab) LV_FONT_DECLARE(gu_icon) LV_FONT_DECLARE(gz_20)
+LV_FONT_DECLARE(gn_hero) LV_FONT_DECLARE(gn_dist) LV_FONT_DECLARE(gn_unit) LV_FONT_DECLARE(gn_mid) LV_FONT_DECLARE(gn_lab)  // Nunito, HomeView mockup faces
 // RAM copies of the compact CJK fonts so a runtime fallback (full CJK font) can cover rare characters
 static lv_font_t f20_rt, f21_rt; static bool f_init=false;
 const lv_font_t* gw_f20(void){ if(!f_init){ f20_rt=gz_20; f21_rt=gz_20; /* size: gz_21b (408 KB) dropped, see docs/BUILD.md */ f_init=true; } return &f20_rt; }
 const lv_font_t* gw_f21(void){ gw_f20(); return &f21_rt; }
 void gw_faces_set_fallback(const lv_font_t* f){ gw_f20(); f20_rt.fallback=f; f21_rt.fallback=f; }
+const lv_font_t* gw_f_status(void){ gw_f20(); return f20_rt.fallback?f20_rt.fallback:&f21_rt; }  // full UI text font (30 px on device)
 #define F20 gw_f20()
 #define F21 gw_f21()
 #define I_WIFI "\xEF\x87\xAB"
@@ -111,8 +113,9 @@ static void sec_inval(float deg){ if(deg<0||!f_hands) return; lv_area_t c; lv_ob
 static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*0.006f; sec_inval(f_sa); }
 #define V_USCALE 144  /* 144/256 = 0.56 = mockup 54/96 */
 static void nav_layout(void){ lv_obj_update_layout(v_dist); lv_obj_update_layout(v_unit);
-  int wn=lv_obj_get_width(v_dist), wu=lv_obj_get_width(v_unit)*V_USCALE/256, gap=11, x0=(400-(wn+gap+wu))/2;
-  lv_obj_set_pos(v_dist,x0,0); lv_obj_set_pos(v_unit,x0+wn+gap,0); }
+  int wn=lv_obj_get_width(v_dist), wu=lv_obj_get_width(v_unit), gap=17, x0=(400-(wn+gap+wu))/2;
+  int du=(gn_dist.line_height-gn_dist.base_line)-(gn_unit.line_height-gn_unit.base_line);   // put both baselines on one line
+  lv_obj_set_pos(v_dist,x0,0); lv_obj_set_pos(v_unit,x0+wn+gap,du); }
 static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t a; lv_obj_get_coords(f_hands,&a);
   int cx=(a.x1+a.x2)/2, cy=(a.y1+a.y2)/2; if(f_hh<0) return;
   int ha=((f_hh%12)*60+f_mm)/2, ma=f_mm*6;  // degrees, 0 = 12 o'clock
@@ -165,20 +168,20 @@ void gw_faces_create(lv_obj_t* parent){
   f_glink2=arc(p,84,7,K_CARD2,K_BLUE); lv_obj_align(f_glink2,LV_ALIGN_CENTER,100,100); lv_obj_set_style_arc_opa(f_glink2,LV_OPA_TRANSP,LV_PART_MAIN);
   { lv_obj_t* hid[]={f_time,f_g[0],f_g[1],f_g[2],f_gv[0],f_gv[1],f_gv[2],f_glink2}; for(int i=0;i<8;i++) lv_obj_add_flag(hid[i],LV_OBJ_FLAG_HIDDEN); } // digital Ultra face retired
   for(int i=1;i<=12;i++){ bool q=i%3==0; char nb[4]; snprintf(nb,sizeof nb,"%d",i);   // gu_sm covers 0x20-0x7E: every digit present
-    lv_obj_t* n=label(p,&gu_sm,q?K_TXT:K_SEC,(178*lv_trigo_sin(i*30))>>15,-((178*lv_trigo_cos(i*30))>>15)); lv_label_set_text(n,nb); }
+    lv_obj_t* n=label(p,&gn_mid,q?K_TXT:K_SEC,(178*lv_trigo_sin(i*30))>>15,-((178*lv_trigo_cos(i*30))>>15)); lv_label_set_text(n,nb); }
   f_hands=box(p); lv_obj_add_event_cb(f_hands,hands_draw,LV_EVENT_DRAW_MAIN,NULL); f_hh=f_mm=-1; f_ss=-1; f_sa=-1;
   // ---- RIDE: orange speed sweep (minute ring lives on FACE only)
   p=pg[GW_PAGE_RIDE];
   r_arc=arc(p,360,12,K_CARD,K_ORG); lv_obj_center(r_arc); lv_obj_add_flag(r_arc,LV_OBJ_FLAG_HIDDEN);   // HomeView: no dial
   lv_obj_t* h=label(p,F20,K_SEC,0,-121); lv_label_set_text(h,"速度");
-  r_row=lv_obj_create(p); lv_obj_remove_style_all(r_row); lv_obj_set_size(r_row,LV_SIZE_CONTENT,LV_SIZE_CONTENT); lv_obj_align(r_row,LV_ALIGN_CENTER,0,-37);
+  r_row=lv_obj_create(p); lv_obj_remove_style_all(r_row); lv_obj_set_size(r_row,LV_SIZE_CONTENT,LV_SIZE_CONTENT); lv_obj_align(r_row,LV_ALIGN_CENTER,0,-34);
   lv_obj_set_flex_flow(r_row,LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(r_row,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_END); lv_obj_set_style_pad_column(r_row,5,0);
   lv_obj_remove_flag(r_row,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
-  r_speed=lv_label_create(r_row); lv_obj_set_style_text_font(r_speed,&gu_hero,0); lv_obj_set_style_text_color(r_speed,col(K_TXT),0); lv_obj_set_style_text_letter_space(r_speed,-4,0);
-  r_dot=disc(r_row,16,K_TXT); lv_obj_set_style_margin_bottom(r_dot,10,0);
-  r_dec=lv_label_create(r_row); lv_obj_set_style_text_font(r_dec,&gu_hero,0); lv_obj_set_style_text_color(r_dec,col(K_TXT),0);
-  r_unit=label(p,&gu_lab,K_SEC,0,29); lv_label_set_text(r_unit,"km/h");
-  for(int i=0;i<2;i++){ int x=i?77:-77; r_card[i]=pill(p,146,70,x,102); r_f[i]=label(p,&gu_sm,K_TXT,x,90); r_fl[i]=label(p,F20,K_SEC,x,120); lv_label_set_text(r_fl[i],i?"用时":"里程 km"); }
+  r_speed=lv_label_create(r_row); lv_obj_set_style_text_font(r_speed,&gn_hero,0); lv_obj_set_style_text_color(r_speed,col(K_TXT),0); lv_obj_set_style_text_letter_space(r_speed,-2,0);
+  r_dot=disc(r_row,16,K_TXT); lv_obj_add_flag(r_dot,LV_OBJ_FLAG_HIDDEN);
+  r_dec=lv_label_create(r_row); lv_obj_add_flag(r_dec,LV_OBJ_FLAG_HIDDEN); lv_obj_set_style_text_font(r_dec,&gn_hero,0); lv_obj_set_style_text_color(r_dec,col(K_TXT),0);
+  r_unit=label(p,&gn_lab,K_SEC,0,29); lv_label_set_text(r_unit,"km/h");
+  for(int i=0;i<2;i++){ int x=i?77:-77; r_card[i]=pill(p,146,70,x,102); r_f[i]=label(p,&gn_mid,K_TXT,x,90); r_fl[i]=label(p,F20,K_SEC,x,120); lv_label_set_text(r_fl[i],i?"用时":"里程 km"); }
   r_hint=label(p,F20,K_SEC,0,158); lv_label_set_text(r_hint,"打开 GrokWatch App");
   // ---- TODO: voice to-do list (Ultra style). Up to 5 rows, tap = check off.
   p=pg[GW_PAGE_TODO];
@@ -200,11 +203,10 @@ void gw_faces_create(lv_obj_t* parent){
   v_img=lv_image_create(p); lv_obj_align(v_img,LV_ALIGN_CENTER,0,-108); lv_image_set_scale(v_img,640);
   lv_obj_set_style_image_recolor(v_img,col(K_TXT),0); lv_obj_set_style_image_recolor_opa(v_img,LV_OPA_COVER,0);
   // number + unit as two labels on one baseline row: unit readable (26 px) with a 14 px gap
-  v_row=lv_obj_create(p); lv_obj_remove_style_all(v_row); lv_obj_set_size(v_row,400,gu_num.line_height); lv_obj_align(v_row,LV_ALIGN_CENTER,0,22);
+  v_row=lv_obj_create(p); lv_obj_remove_style_all(v_row); lv_obj_set_size(v_row,400,gn_dist.line_height); lv_obj_align(v_row,LV_ALIGN_CENTER,0,8);
   lv_obj_remove_flag(v_row,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
-  v_dist=lv_label_create(v_row); lv_obj_set_style_text_font(v_dist,&gu_num,0); lv_obj_set_style_text_color(v_dist,col(K_TXT),0); lv_obj_set_style_text_letter_space(v_dist,-1,0);
-  v_unit=lv_label_create(v_row); lv_obj_set_style_text_font(v_unit,&gu_num,0); lv_obj_set_style_text_color(v_unit,col(K_SEC),0);
-  lv_obj_set_style_transform_scale(v_unit,V_USCALE,0); lv_obj_set_style_transform_pivot_x(v_unit,0,0); lv_obj_set_style_transform_pivot_y(v_unit,gu_num.line_height-gu_num.base_line,0);
+  v_dist=lv_label_create(v_row); lv_obj_set_style_text_font(v_dist,&gn_dist,0); lv_obj_set_style_text_color(v_dist,col(K_TXT),0); lv_obj_set_style_text_letter_space(v_dist,-1,0);
+  v_unit=lv_label_create(v_row); lv_obj_set_style_text_font(v_unit,&gn_unit,0); lv_obj_set_style_text_color(v_unit,col(K_SEC),0);
   v_card=pill(p,290,60,0,112);
   v_dir=label(v_card,F21,K_TXT,0,0); lv_obj_set_width(v_dir,260); lv_label_set_long_mode(v_dir,LV_LABEL_LONG_DOT);
   v_meta=label(p,F20,K_SEC,0,168);
@@ -323,9 +325,8 @@ void gw_faces_show(int page, const gw_state_t* s){
     bool has=s->speed&&s->speed[0]; float v=0; if(has) sscanf(s->speed,"%f",&v);
     if(enter){ a_spd=v; t_spd=v; } else if(v!=t_spd){ anim(&t_spd,ax_spd,(int)(a_spd*10),(int)(v*10),400,0,NULL); t_spd=v; }
     if(prog>=1000) apply_prog();
-    if(has){ int t10=(int)(v*10+0.5f); if(t10<0) t10=0; snprintf(b,sizeof b,"%d",t10/10); lv_label_set_text(r_speed,b); lv_obj_set_style_text_color(r_speed,col(K_TXT),0);
-      snprintf(b,sizeof b,"%d",t10%10); lv_label_set_text(r_dec,b); lv_obj_remove_flag(r_dot,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(r_dec,LV_OBJ_FLAG_HIDDEN); }
-    else { lv_label_set_text(r_speed,"--"); lv_obj_set_style_text_color(r_speed,col(K_TER),0); lv_obj_add_flag(r_dot,LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(r_dec,LV_OBJ_FLAG_HIDDEN); }
+    if(has){ int t10=(int)(v*10+0.5f); if(t10<0) t10=0; snprintf(b,sizeof b,"%d.%d",t10/10,t10%10); lv_label_set_text(r_speed,b); lv_obj_set_style_text_color(r_speed,col(K_TXT),0); }
+    else { lv_label_set_text(r_speed,"--"); lv_obj_set_style_text_color(r_speed,col(K_TER),0); }
     snprintf(b,sizeof b,"%d:%02d",s->ride_min/60,s->ride_min%60); lv_label_set_text(r_f[1],b);
     if(s->nav_active&&s->nav_eta&&s->nav_eta[0]){ lv_label_set_text(r_f[0],s->nav_eta); lv_label_set_text(r_fl[0],"到达"); }
     else { snprintf(b,sizeof b,"%.1f",s->ride_km); lv_label_set_text(r_f[0],b); lv_label_set_text(r_fl[0],"里程 km"); }
@@ -335,7 +336,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     bool any=s->n_todo>0;
     if(s->todo_state==3&&!any) snprintf(b,sizeof b,"待办 · 未启用"); else if(s->todo_state==2&&!any) snprintf(b,sizeof b,"待办 · 离线"); else if(s->todo_state==1&&!any) snprintf(b,sizeof b,"待办 · 同步中"); else if(s->todo_open) snprintf(b,sizeof b,"待办 · %d",s->todo_open); else snprintf(b,sizeof b,"待办");
     lv_label_set_text(t_head,b);
-    { int n=s->n_todo>GW_TODO_ROWS?GW_TODO_ROWS:s->n_todo; for(int i=0;i<n;i++) lv_obj_align(t_row[i],LV_ALIGN_CENTER,0,4+i*54-(n-1)*27); }
+    { int n=s->n_todo>GW_TODO_ROWS?GW_TODO_ROWS:s->n_todo; int rh=n<=4?60:48, sp=n<=4?70:54; for(int i=0;i<n;i++){ lv_obj_set_height(t_row[i],rh); lv_obj_set_style_radius(t_row[i],rh/2,0); lv_obj_align(t_row[i],LV_ALIGN_CENTER,0,4+i*sp-(n-1)*sp/2); } }
     for(int i=0;i<GW_TODO_ROWS;i++){ if(i<s->n_todo){ bool d=s->todo_done[i];
         lv_label_set_text(t_txt[i],s->todo_text[i]?s->todo_text[i]:""); lv_obj_set_style_text_color(t_txt[i],col(d?K_SEC:K_TXT),0);
         lv_obj_set_style_text_decor(t_txt[i],d?LV_TEXT_DECOR_STRIKETHROUGH:LV_TEXT_DECOR_NONE,0);
