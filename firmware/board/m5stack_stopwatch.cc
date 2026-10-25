@@ -18,11 +18,14 @@
 #include <functional>
 #include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
+#include <cmath>
+#include "bmi270_api.h"
+#include "gw_orient.h"
 
 extern "C" void gw_ble_start(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
 void NavUiSetHaptic(void (*f)(int)); void NavUiSetBacklight(void (*f)(int)); void NavUiKey(int ev, std::function<void()> normal); bool NavUiIsStandby(); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
-void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void);
+void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void); bool NavUiBusy();
 #include <esp_timer.h>
 #include "gw_health.h"
 #include <ssid_manager.h>
@@ -197,6 +200,9 @@ private:
     Button button2_;
     RoundLcdDisplay* display_;
     StopwatchBacklight* backlight_;
+    esp_lcd_panel_io_handle_t panel_io_ = nullptr;
+    esp_lcd_panel_handle_t panel_ = nullptr;
+    esp_lcd_touch_handle_t tp_ = nullptr;
 public:
     bool pa_on_ = true;
 private:
@@ -309,6 +315,7 @@ private:
         display_ = new RoundLcdDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                        DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
                                        DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        panel_io_ = panel_io; panel_ = panel;
         backlight_ = new StopwatchBacklight(panel_io, display_);
         backlight_->RestoreBrightness();
     }
@@ -414,6 +421,7 @@ private:
             ESP_LOGE(TAG, "CST820 init failed");
             return;
         }
+        tp_ = tp;
         const lvgl_port_touch_cfg_t touch_cfg = {.disp = lv_display_get_default(), .handle = tp};
         NavUiSetTouchIndev(lvgl_port_add_touch(&touch_cfg));
 
@@ -421,10 +429,69 @@ private:
         ESP_LOGI(TAG, "Touch ready");
     }
 
+    // 2.6.34: BMI270 (I2C 0x68) -> auto 180° flip when the watch hangs upside down (e.g. held by the lanyard).
+    // Flip is done in hardware: CO5300 MADCTL + address gap, touch mirrored by esp_lcd_touch. LVGL and gw_slide's
+    // direct push keep drawing in logical coordinates, so the UI, slide strips and swipe directions need no change.
+    // Knobs (NVS "gw", read at boot, settable live with the console "rot" command): rot=0 off; rot_ax 0/1/2 = accel
+    // axis toward the screen top, rot_sg +1/-1; rot_mad MADCTL for 180° (CO5300: 0x02 flip H | 0x05 flip V, per
+    // Arduino_GFX); rot_gx/rot_gy address gap while flipped (upright: 6/0).
+    // ponytail: axis/sign/gap defaults are not verified on hardware yet; first flash reads GW-ROT logs to calibrate.
+    int rot_on_ = 1, rot_ax_ = 1, rot_sg_ = 1, rot_mad_ = 0x07, rot_gx_ = 0, rot_gy_ = 0;
+    bool flipped_ = false;
+    float acc_[3] = {};
+    void LoadRotKnobs() {
+        Settings s("gw", false);
+        rot_on_ = s.GetInt("rot", 1); rot_ax_ = s.GetInt("rot_ax", 1) % 3; rot_sg_ = s.GetInt("rot_sg", 1) < 0 ? -1 : 1;
+        rot_mad_ = s.GetInt("rot_mad", 0x07); rot_gx_ = s.GetInt("rot_gx", 0); rot_gy_ = s.GetInt("rot_gy", 0);
+    }
+    // UI context (main task). Skipped while a finger is down or a slide runs; the IMU task asks again 100 ms later.
+    void SetFlip(bool f) {
+        DisplayLockGuard g(display_);
+        if (f == flipped_ || NavUiBusy()) return;
+        flipped_ = f;
+        uint8_t m = f ? rot_mad_ : 0;   // upright MADCTL is 0 (esp_lcd_panel_mirror(false,false) at init)
+        esp_lcd_panel_io_tx_param(panel_io_, (LCD_OPCODE_WRITE_CMD << 24) | (0x36 << 8), &m, 1);
+        esp_lcd_panel_set_gap(panel_, f ? rot_gx_ : 0x06, f ? rot_gy_ : 0);
+        if (tp_) { esp_lcd_touch_set_mirror_x(tp_, f); esp_lcd_touch_set_mirror_y(tp_, f); }
+        lv_obj_invalidate(lv_screen_active()); lv_obj_invalidate(lv_layer_top());
+        ESP_LOGW("GW-ROT", "%s (acc %.2f %.2f %.2f, mad=0x%02x gap=%d,%d)", f ? "flipped" : "upright", acc_[0], acc_[1], acc_[2], m, f ? rot_gx_ : 6, f ? rot_gy_ : 0);
+    }
+    static void ImuTask(void* arg) {
+        auto* b = static_cast<M5StackStopwatchBoard*>(arg);
+        i2c_config_t c = {}; c.mode = I2C_MODE_MASTER; c.sda_io_num = AUDIO_CODEC_I2C_SDA_PIN; c.scl_io_num = AUDIO_CODEC_I2C_SCL_PIN;
+        c.sda_pullup_en = true; c.scl_pullup_en = true; c.master.clk_speed = 400000;
+        i2c_bus_handle_t bus = i2c_bus_create(I2C_NUM_0, &c);   // wraps the board's existing I2C_NUM_0 master bus
+        bmi270_handle_t h = nullptr;
+        if (!bus || bmi270_sensor_create(bus, &h, bmi270_config_file, BMI2_GYRO_CROSS_SENS_ENABLE | BMI2_CRT_RTOSK_ENABLE) != ESP_OK || !h) {
+            ESP_LOGE("GW-ROT", "BMI270 init failed, auto-rotate off"); vTaskDelete(nullptr); return; }
+        uint8_t acc = BMI2_ACCEL; bmi270_sensor_enable(&acc, 1, h);
+        bmi2_sens_config cfg = {}; cfg.type = BMI2_ACCEL; bmi270_get_sensor_config(&cfg, 1, h);
+        cfg.cfg.acc.odr = BMI2_ACC_ODR_25HZ; cfg.cfg.acc.range = BMI2_ACC_RANGE_2G; bmi270_set_sensor_config(&cfg, 1, h);
+        gw_orient_t o = {}; int n = 0;
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            bmi2_sens_data d = {};
+            if (bmi2_get_sensor_data(&d, h) != BMI2_OK) continue;
+            float* a = b->acc_; a[0] = d.acc.x / 16384.f; a[1] = d.acc.y / 16384.f; a[2] = d.acc.z / 16384.f;
+            if (n++ == 10) ESP_LOGW("GW-ROT", "BMI270 ok, acc %.2f %.2f %.2f (ax=%d sg=%d on=%d)", a[0], a[1], a[2], b->rot_ax_, b->rot_sg_, b->rot_on_);
+            int st = b->rot_on_ ? gw_orient_feed(&o, b->rot_sg_ * a[b->rot_ax_], sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])) : 0;
+            if (st != (int)b->flipped_) Application::GetInstance().Schedule([b, st]() { b->SetFlip(st); });
+        }
+    }
+    void InitializeImu() { LoadRotKnobs(); xTaskCreate(ImuTask, "gw_imu", 4096, this, 2, nullptr); }
+
     // 2.6.19: PowerSaveTimer removed (it entered standby on its own after 60 s on battery and light-slept the CPU,
     // which also muted the wake word). Standby is owned by the nav_ui state machine; Wi-Fi/BLE stay up in standby.
 
 public:
+    // Console "rot": no key = status; else set NVS gw/<key> and apply (re-flips on the next IMU sample).
+    static int RotCmd(const char* key, int val, char* out, int n) {
+        auto* b = self_; if (!b) return snprintf(out, n, "ERR no board\n");
+        if (key && key[0]) { { Settings s("gw", true); s.SetInt(key, val); } b->LoadRotKnobs();
+            Application::GetInstance().Schedule([b]() { bool f = b->flipped_; b->flipped_ = !f; b->SetFlip(f); }); }   // re-send with new knobs
+        return snprintf(out, n, "ROT on=%d flipped=%d acc=%.2f,%.2f,%.2f ax=%d sg=%d mad=0x%02x gap=%d,%d\n", b->rot_on_, (int)b->flipped_,
+            b->acc_[0], b->acc_[1], b->acc_[2], b->rot_ax_, b->rot_sg_, b->rot_mad_, b->rot_gx_, b->rot_gy_);
+    }
     // GrokWatch: boot record rides along in the OTA check body (board.gw_boot), readable server-side without serial.
     std::string GetBoardJson() override {
         std::string j = WifiBoard::GetBoardJson(); char b[256];
@@ -442,6 +509,7 @@ public:
         InitializeDisplay();
         InitializeTouch();
         InitializeButtons();
+        InitializeImu();
         { auto& sm=SsidManager::GetInstance();
           if (sizeof(WIFI_HOT_PASS)>1) sm.AddSsid(WIFI_HOT_SSID, WIFI_HOT_PASS);
           if (sizeof(WIFI_HOME_PASS)>1) sm.AddSsid(WIFI_HOME_SSID, WIFI_HOME_PASS); }
@@ -518,4 +586,5 @@ public:
 };
 
 M5StackStopwatchBoard* M5StackStopwatchBoard::self_ = nullptr;
+int GwRotCmd(const char* key, int val, char* out, int n) { return M5StackStopwatchBoard::RotCmd(key, val, out, n); }
 DECLARE_BOARD(M5StackStopwatchBoard);

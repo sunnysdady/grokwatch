@@ -343,6 +343,7 @@ void NavUiGoPage(int p){ sched([p](){ go(p, p>=page?1:-1); }); }
 int  NavUiPage(){ return page; }
 void NavUiTouchLog(bool on){ touch_log=on; }
 void NavUiFpsLog(bool on){ fps_log=on; }
+bool NavUiBusy(){ return gw_slide_active()||gw_slide_dragging()||(touch_indev&&lv_indev_get_state(touch_indev)==LV_INDEV_STATE_PRESSED); }   // 2.6.34: no 180° flip mid-touch/slide
 bool NavUiSlideOn(){ return true; }   // 2.6.24: snapshot slide always on (governor removed)
 // last n frames (n<=128): min/avg/max frame time in 0.1 ms; returns frames counted so far
 uint32_t NavUiFrameStats(int n,int* mn,int* av,int* mx){ if(n>128) n=128; if((uint32_t)n>fr_total) n=(int)fr_total; int a=0,lo=1<<30,hi=0;

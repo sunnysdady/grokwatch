@@ -1,6 +1,6 @@
 #pragma GCC diagnostic ignored "-Wmisleading-indentation"
 // USB-Serial-JTAG test console (debug/private builds only: compiled in when GW_TEST_CONSOLE=1, otherwise a no-op).
-// Line commands: swipe l|r|u|d, tap x y, longpress x y, page n, stat, fps on|off, touchlog on|off, help
+// Line commands: swipe l|r|u|d, tap x y, longpress x y, page n, stat, fps on|off, touchlog on|off, rot [key v], help
 // Touch injection: a second LVGL pointer indev on the same display -> same LVGL press/gesture/click pipeline the
 // CST820 indev feeds (only the I2C read is bypassed).
 #include <esp_log.h>
@@ -23,6 +23,7 @@ extern "C" void gw_console_start(void);
 #include <esp_memory_utils.h>
 void NavUiGoPage(int p); int NavUiPage(); void NavUiTouchLog(bool on); void NavUiFpsLog(bool on); bool NavUiSlideOn();
 uint32_t NavUiFrameStats(int n,int* mn,int* av,int* mx);
+int GwRotCmd(const char* key,int val,char* out,int n);
 static const char* TAG="gwcon";
 static volatile int inj_x=233, inj_y=233; static volatile bool inj_down=false;
 static void inj_read(lv_indev_t*, lv_indev_data_t* d){ d->point.x=inj_x; d->point.y=inj_y; d->state=inj_down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED; }
@@ -88,7 +89,8 @@ static void handle(char* l){
   else if(!strcmp(c,"proffull")) prof(a[0]?atoi(a):3,true);
   else if(!strcmp(c,"fps")){ NavUiFpsLog(!strcmp(a,"on")); out("OK\n"); }
   else if(!strcmp(c,"touchlog")){ NavUiTouchLog(!strcmp(a,"on")); out("OK\n"); }
-  else out("CMDS: swipe l|r|u|d | tap x y | longpress x y | page n | stat | fps on|off | touchlog on|off\n"); }
+  else if(!strcmp(c,"rot")){ char b[200]; GwRotCmd(a,y,b,sizeof b); out(b); }   // rot | rot <rot|rot_ax|rot_sg|rot_mad|rot_gx|rot_gy> v
+  else out("CMDS: swipe l|r|u|d | tap x y | longpress x y | page n | stat | fps on|off | touchlog on|off | rot [key v]\n"); }
 static void task(void*){ char line[96]; int n=0;
   for(;;){ uint8_t ch; if(usb_serial_jtag_read_bytes(&ch,1,portMAX_DELAY)!=1) continue;
     if(ch=='\r'||ch=='\n'){ if(n){ line[n]=0; handle(line); n=0; } } else if(n<(int)sizeof line-1) line[n++]=(char)ch; } }
