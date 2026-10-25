@@ -29,8 +29,12 @@ static void ax(void* var,int32_t v){ (void)var; if(!ov) return;   // v: 0..1000 
   int x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
   lv_obj_set_x(im_new,x_new); lv_obj_set_x(im_old,x_old); }
 static void anim_done(lv_anim_t* a){ (void)a; finish(); }
-bool gw_slide_snap_old(void){ if(ov) finish(); have_old=false; if(!bufs()) return false;
+static int64_t pre_us;   // when the old page was snapped at touch-down (0 = none)
+bool gw_slide_snap_old(void){ if(ov) finish(); int64_t n=us();
+  if(have_old&&pre_us&&n-pre_us<1500000){ pre_us=0; snap_us[0]=0; return true; }   // snapped at touch-down: the swipe pays nothing
+  pre_us=0; have_old=false; if(!bufs()) return false;
   have_old=snap(&sb_old,m_old,&snap_us[0]); return have_old; }
+void gw_slide_prepare(void){ if(ov||!bufs()) return; have_old=snap(&sb_old,m_old,&snap_us[0]); pre_us=have_old?us():0; }
 static const gw_slide_hw_t* hw; static int st_frames, st_ms, st_max_us, st_comp_ms, st_wait_ms;
 void gw_slide_set_hw(const gw_slide_hw_t* h){ hw=h; }
 void gw_slide_last_split(int* comp_ms,int* wait_ms){ if(comp_ms)*comp_ms=st_comp_ms; if(wait_ms)*wait_ms=st_wait_ms; }

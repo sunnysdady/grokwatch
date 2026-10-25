@@ -178,7 +178,7 @@ static void click_cb(lv_event_t* e){
 }
 static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_active()) return; if(page==0) chat_try(true); }
 static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
-  if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(!standby) sb_ev(SB_EV_ACTIVITY,"touch"); if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
+  if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(!standby) sb_ev(SB_EV_ACTIVITY,"touch"); if(built&&!standby&&!gw_slide_active()) gw_slide_prepare(); if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
   else if(c==LV_EVENT_RELEASED){ if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
 // P0 (2.6.4 crash): F20/F21 keep a raw .fallback to the theme text font. LvglBuiltInFont owns a heap COPY of the
 // builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
