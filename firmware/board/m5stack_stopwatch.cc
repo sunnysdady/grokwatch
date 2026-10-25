@@ -433,16 +433,16 @@ private:
     // Flip is done in hardware: CO5300 MADCTL + address gap, touch mirrored by esp_lcd_touch. LVGL and gw_slide's
     // direct push keep drawing in logical coordinates, so the UI, slide strips and swipe directions need no change.
     // Knobs (NVS "gw", read at boot, settable live with the console "rot" command): rot=0 off; rot_ax 0/1/2 = accel
-    // axis toward the screen top, rot_sg +1/-1; rot_mad MADCTL for 180° (CO5300: 0x02 flip H | 0x05 flip V, per
-    // Arduino_GFX); rot_gx/rot_gy address gap while flipped (upright: 6/0).
+    // axis toward the screen top, rot_sg +1/-1; rot_mad MADCTL for 180° (CO5300: standard MY 0x80 | MX 0x40; verified on
+    // hardware, Arduino_GFX's 0x02/0x05 left it mirrored); rot_gx/rot_gy address gap while flipped (upright: 6/0).
     // Calibrated on hardware 2026-10-26: screen top = -x (upright x~-0.9, hanging by the lanyard x~+1.0).
-    int rot_on_ = 1, rot_ax_ = 0, rot_sg_ = -1, rot_mad_ = 0x07, rot_gx_ = 0, rot_gy_ = 0;
+    int rot_on_ = 1, rot_ax_ = 0, rot_sg_ = -1, rot_mad_ = 0xC0, rot_gx_ = 0, rot_gy_ = 0;
     bool flipped_ = false;
     float acc_[3] = {};
     void LoadRotKnobs() {
         Settings s("gw", false);
         rot_on_ = s.GetInt("rot", 1); rot_ax_ = s.GetInt("rot_ax", 0) % 3; rot_sg_ = s.GetInt("rot_sg", -1) < 0 ? -1 : 1;
-        rot_mad_ = s.GetInt("rot_mad", 0x07); rot_gx_ = s.GetInt("rot_gx", 0); rot_gy_ = s.GetInt("rot_gy", 0);
+        rot_mad_ = s.GetInt("rot_mad", 0xC0); rot_gx_ = s.GetInt("rot_gx", 0); rot_gy_ = s.GetInt("rot_gy", 0);
     }
     // UI context (main task). Skipped while a finger is down or a slide runs; the IMU task asks again 100 ms later.
     void SetFlip(bool f) {
