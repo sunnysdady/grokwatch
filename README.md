@@ -11,7 +11,10 @@ GrokWatch 是给 M5Stack StopWatch (ESP32-S3) 做的骑行大屏伴侣固件，�
 - 导航和码表：高德导航箭头、距离、ETA，转弯前震动，显示速度、骑行计时、里程和骑行总结
 - Grok 语音：按蓝色键说话，有语音回复和字幕，离线时会显示
 - 上滑打开控制中心：亮度、音量、夜间模式（低亮度暖白）、勿扰、电量、BLE/Wi-Fi
-- 待机时钟：息屏后纯黑底大字时:分，每分钟微移防烧屏
+- 待机时钟：息屏后纯黑底翻页卡片时:分，整分钟翻牌，每分钟微移防烧屏
+- 表盘背景：在 App 里「表盘 > 更换背景图片」选照片，经 BLE 发到手表，重启后保留
+- 切页：手指跟随滑动，QSPI 80 MHz + TE 同步出帧；纯黑无边框页面
+- 自动翻转：挂绳倒挂时按 BMI270 加速度计自动把屏幕转 180°
 - 不转发普通通知：App 只读取高德 / Google 地图的导航通知
 
 ### 编译
@@ -34,7 +37,10 @@ GrokWatch is cycling big-screen companion firmware for the M5Stack StopWatch (ES
 - Navigation and cycling computer: AMap arrows, distance, ETA, pre-turn haptics, plus speed, ride timer, km and a ride summary.
 - Grok voice: push the blue button to talk; replies are spoken with subtitles, and offline state is shown.
 - Swipe up for the Control Center: brightness, volume, night mode (dim warm white), DND, battery, BLE/Wi-Fi.
-- Standby clock: pure-black big HH:MM when idle, shifted a few pixels each minute against burn-in.
+- Standby clock: pure-black flip-card HH:MM when idle (digits flip on the minute), shifted a few pixels each minute against burn-in.
+- Watch-face background: pick a photo in the app (Face > Change background), sent over BLE, kept across reboots.
+- Page slides follow the finger, with QSPI at 80 MHz and TE-synced frames; pages are pure black and frameless.
+- Auto 180° flip from the BMI270 accelerometer when the watch hangs upside down on the lanyard.
 - No notification forwarding: the app only reads AMap / Google Maps navigation notifications.
 
 Build: same steps as the Chinese section above. OTA: drop the bin into the server's `data/bin`; app rollback is enabled. Privacy: only map navigation notifications are read, sent over BLE only and never uploaded; no secrets are in the repo.

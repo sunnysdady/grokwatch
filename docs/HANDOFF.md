@@ -1,9 +1,10 @@
 # GrokWatch 接力说明（2026-10-25 18:5x，Asia/Shanghai）
 
-## 结论（先读）
-- **手表现在跑 2.6.23**，在 `ota_1`，状态 VALID（自检 31 s 通过）。console.bin sha256 `7649613f546fb81a7b5ab6b7a65cd3a47347c34af5699f5d01a6004c44c45b22`。assets 分区已写回原始备份（含旧的 WakeNet「你好小智」模型）。正常开机，不在下载模式。
-- **2.6.24 没有刷、也没有编译成功**（编译被中断）。改动在本地分支 `wip/2.6.24-smooth`，commit `10f434b`，未推送、未合并。只在模拟器里验证过。
-- 下一步：在 wip 分支上把固件编译通过 → 按刷机流程刷 → 用串口看 `GW-FRAME / GW-SLIDE / GW-BENCH` 数据，确认切页 ≥30 fps、内部堆最低值 ≥24576。
+## 结论（先读）（2026-10-26 更新）
+- **手表现在跑 2.6.36**，在 `ota_1`，开机自检 31 s 通过、已标记 VALID，无复位无崩溃（`work/hardware-test/flash-2636-summary.json`）。console.bin sha256 `9443c121847c81c32919e207a9c1ca5757928246b355126a101b869ee5c78e1f`。观察窗结束后 USB 串口消失，最后一次 otadata 回读没做成；手表处于正常运行，不在下载模式。
+- 回滚备份：`work/hardware-test/backup-ota1-2.6.35.bin`（2.6.35，sha `033f036b…becc`，长度 3441840）。
+- 代码在分支 `wip/2.6.24-smooth`，已推送到 GitHub，并快进合并到 `main`。2.6.24–2.6.36 的变更见第 5 节。
+- 下一次刷机时当前 ota_1 是 2.6.36：`--expect-ota1-sha 9443c121847c81c32919e207a9c1ca5757928246b355126a101b869ee5c78e1f --expect-ota1-len` 取 `work/candidates/2.6.36/console.bin` 的长度，备份命名 `backup-ota1-2.6.36.bin`。
 
 ## 1. 项目是什么
 StopWatch 圆屏手表（M5Stack StopWatch v1.0.1）上的**骑行大屏副表**，固件基于 xiaozhi-esp32 改造。核心三件事：导航（手机 App 用无障碍读高德，经 BLE 发给手表）、码表（速度/里程/用时）、Grok 对话。视觉风格对标 Apple Watch Ultra / Apple HomeView。
@@ -49,6 +50,13 @@ StopWatch 圆屏手表（M5Stack StopWatch v1.0.1）上的**骑行大屏副表**
   - 2.6.21：把 PMIC 的 BTN_WAKE（0x02）也当作单击。
   - 2.6.22：新增 `gw_redkey` 解码器（以 BTN_FLAG 为主）；闲置进入待机的渐暗过程中按红键不再唤醒。
   - 2.6.23：骑行速度显示 0.1 km/h，整数和小数分成两个 label，整数用固定宽度格（commit d55b734）；之后补了 docs/hardware.md（2c989a9）。
+  - 2.6.24：打点（GW-FRAME/GW-SLIDE/GW-BENCH）、去掉语音唤醒和 AFE（只有按键开麦）、GrokBot 页脸居中无字幕、LVGL -O2。
+  - 2.6.25–2.6.30：直推切页（绕过 LVGL 合成）、按下时先快照旧页、跳过落地整屏重绘。
+  - 2.6.31：固定边框下的推入切页；2.6.32：手指跟随切页；2.6.33：纯黑无边框页面。
+  - 自动翻转：BMI270 加速度计判断挂绳倒挂，CO5300 180° = MADCTL 0xC0，真机已验证。
+  - 2.6.34：QSPI 80 MHz（整屏约 10.9 ms）+ TE（GPIO38）同步切页出帧。
+  - 2.6.35：App「表盘 > 更换背景图片」，466×466 RGB565 经 BLE（0x60–0x62）发到手表，存在 assets 分区尾部 0x780000，重启保留。
+  - 2.6.36：唤醒待机的那次触摸整个忽略到抬手，不会再顺带切页；待机时钟改成翻页卡片，整分钟翻牌。
 - 闲置进入待机的时间保持 20 秒（Sunny 要求先不改）。
 
 ## 6. 刷机流程和坑
@@ -94,5 +102,5 @@ StopWatch 圆屏手表（M5Stack StopWatch v1.0.1）上的**骑行大屏副表**
 - App `io.grokwatch.app`：在本仓库 `android/`，main 上是 versionName 0.6.2（versionCode 62）。另外有 `app/0.6.3`、`app/0.7.1` 分支（哪个是最新发布版**未确认**）。无障碍读高德的实现在 `NavA11y.kt`，导航帧格式见 docs/nav-0x11-ext.md。
 - xiaozhi 服务器和 relay：仓库 `server/` 里有插件（gw_todo.py、gw_quota.py、ota_guard.py）和 INSTALL.md。MBA 上服务器的实际目录、启动命令，仍**未确认**（Slack 令牌的钥匙串条目已确认，见下一条），请向 Sunny 确认，不要猜。
 - Slack 语音链路：手表上的提问经服务器转到 Slack，再由 Grok Bot 回复，转成语音播报。走私有频道 **#grokwatch-voice**，令牌在 MBA 钥匙串条目 **`grokwatch-slack`**（Sunny 确认；令牌本身不进仓库、不进日志）。其余细节见 docs/relay/RELAY-2026-10-25.md。
-- GitHub `sunnysdady/grokwatch`：开源前要检查 git 历史里有没有密钥、内网地址、console.bin、NVS 或备份；公开的固件只能是 public.bin。当前推送状态**未确认**；不经 Sunny 原话同意不要推。
+- GitHub `sunnysdady/grokwatch`（公开仓库）：2026-10-26 经 Sunny 同意推送了分支 `wip/2.6.24-smooth`（到 2.6.36），`main` 快进到同一提交。推之前查过历史，没有发现密钥或邮箱；`work/` 不入库，console.bin 不公开。以后每次推送仍要 Sunny 原话同意。
 - 宣传片 v4 在 box 的 `/workspace/gw-promo/v4`。
