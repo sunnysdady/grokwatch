@@ -30,6 +30,7 @@ static uint32_t g_now, g_pool_at, g_morph_at;
 static uint8_t g_pool_pos;
 static float g_points[2][48][2], g_from[2][48][2], g_to[2][48][2];
 static void apply_skin(void);
+static const char* const HINT[]={"长按说话","正在聆听…","思考中…","","离线"};
 static lv_obj_t* rect(lv_obj_t* p,int w,int h,int r,uint32_t c){ lv_obj_t* o=lv_obj_create(p); lv_obj_remove_style_all(o); lv_obj_set_size(o,w,h);
   lv_obj_set_style_radius(o,r,0); lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0); lv_obj_set_style_bg_color(o,lv_color_hex(c),0);
   lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE); return o; }
@@ -169,14 +170,16 @@ void gw_grok_create(lv_obj_t* parent){
   for(int i=0;i<7;i++){ g_bar[i]=rect(g_root,7,5,4,SKIN[0].accent); lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN); }
   for(int i=0;i<3;i++){ g_dot[i]=rect(g_root,7,7,4,i==0?0x9A72EE:(i==1?0x5B95F0:0x35C3BD)); lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN); }
   g_stat=lv_label_create(g_root); lv_obj_set_style_text_font(g_stat,F21,0); lv_obj_set_style_text_color(g_stat,lv_color_hex(SKIN[0].accent),0); lv_obj_align(g_stat,LV_ALIGN_CENTER,0,-152);
-  g_sub=lv_obj_create(g_root); lv_obj_remove_style_all(g_sub); lv_obj_set_size(g_sub,300,84); lv_obj_align(g_sub,LV_ALIGN_CENTER,0,148);
-  lv_obj_set_flex_flow(g_sub,LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(g_sub,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_scroll_dir(g_sub,LV_DIR_VER); lv_obj_set_scrollbar_mode(g_sub,LV_SCROLLBAR_MODE_OFF);
-  g_user=lv_label_create(g_sub); lv_obj_set_style_text_font(g_user,F20,0); lv_obj_set_style_text_color(g_user,lv_color_hex(SKIN[0].sec),0); lv_obj_set_width(g_user,300);
-  lv_label_set_long_mode(g_user,LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(g_user,LV_TEXT_ALIGN_CENTER,0);
-  g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_style_text_color(g_reply,lv_color_white(),0); lv_obj_set_width(g_reply,300);
+  // Subtitles: the question is one fixed line (ellipsis); the reply lives in its own 2-line window below it and
+  // scrolls so the newest text shows. A long reply can never climb over the question or the character.
+  int lh=lv_font_get_line_height(F20);
+  g_user=lv_label_create(g_root); lv_obj_set_style_text_font(g_user,F20,0); lv_obj_set_width(g_user,300); lv_obj_set_height(g_user,lh);
+  lv_label_set_long_mode(g_user,LV_LABEL_LONG_DOT); lv_obj_set_style_text_align(g_user,LV_TEXT_ALIGN_CENTER,0); lv_obj_align(g_user,LV_ALIGN_CENTER,0,116);
+  g_sub=lv_obj_create(g_root); lv_obj_remove_style_all(g_sub); lv_obj_set_size(g_sub,284,lh*2+4); lv_obj_align_to(g_sub,g_user,LV_ALIGN_OUT_BOTTOM_MID,0,4);
+  lv_obj_set_scroll_dir(g_sub,LV_DIR_VER); lv_obj_set_scrollbar_mode(g_sub,LV_SCROLLBAR_MODE_OFF); lv_obj_remove_flag(g_sub,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLL_ELASTIC);
+  g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_width(g_reply,284);
   lv_label_set_long_mode(g_reply,LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(g_reply,LV_TEXT_ALIGN_CENTER,0);
-  lv_label_set_text(g_user,""); lv_label_set_text(g_reply,""); lv_label_set_text(g_stat,"");
+  lv_label_set_text(g_user,""); lv_label_set_text(g_reply,""); lv_label_set_text(g_stat,HINT[0]);
   apply_skin();
   lv_obj_add_flag(g_root,LV_OBJ_FLAG_HIDDEN);
   if(!g_tm) g_tm=lv_timer_create(tick,33,NULL); lv_timer_pause(g_tm);
@@ -189,13 +192,13 @@ void gw_grok_state(int st){ if(st<0||st>4) return;
     for(int i=0;i<7;i++) st==1?lv_obj_remove_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN);
     for(int i=0;i<3;i++) st==2?lv_obj_remove_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN);
   }
-  static const char* S[]={"轻触或按蓝键说话","正在聆听…","思考中…","","离线"}; if(g_stat&&st>=0&&st<=4) lv_label_set_text(g_stat,S[st]); }
+  if(g_stat) lv_label_set_text(g_stat,HINT[st]); }
 void gw_grok_level(int l){ g_lvl=l<0?0:(l>100?100:l); }
 void gw_grok_status(const char* s){ if(g_stat&&s) lv_label_set_text(g_stat,s); }
 void gw_grok_text(const char* role,const char* t){ if(!g_root||!t) return;
   if(role&&!strcmp(role,"user")){ lv_label_set_text(g_user,t); lv_label_set_text(g_reply,""); }
   else lv_label_set_text(g_reply,t);
-  lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF); }
+  lv_obj_update_layout(g_sub); lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF); }
 static void apply_skin(void){ if(!g_root) return;
   lv_obj_set_style_bg_color(g_root,lv_color_hex(SK->bg),0);
   for(int i=0;i<7;i++) lv_obj_set_style_bg_color(g_bar[i],lv_color_hex(SK->accent),0);

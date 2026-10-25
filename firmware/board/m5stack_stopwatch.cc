@@ -35,6 +35,8 @@ void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void);
 #define WIFI_HOT_PASS ""
 #endif
 #include "settings.h"
+extern "C" { void gw_grok_state(int st); void gw_grok_text(const char* role, const char* text); }
+#include <cstring>
 #define TAG "M5StackStopwatch"
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
 
@@ -89,9 +91,36 @@ public:
         }
         return r;
     }
+    // GrokWatch: the chat page is gw_grok (mint character). Map xiaozhi device states onto its five states.
+    void SetStatus(const char* status) override {
+        SpiLcdDisplay::SetStatus(status);
+        if (!status) return;
+        int st = -1;
+        if (!strcmp(status, Lang::Strings::LISTENING)) st = 1;
+        else if (!strcmp(status, Lang::Strings::CONNECTING)) st = 2;
+        else if (!strcmp(status, Lang::Strings::SPEAKING)) st = 3;
+        else if (!strcmp(status, Lang::Strings::STANDBY)) st = WifiManager::GetInstance().IsConnected() ? 0 : 4;
+        if (st < 0) return;
+        DisplayLockGuard lock(this);
+        gw_grok_state(st);
+    }
+    void SetChatMessage(const char* role, const char* content) override {
+        SpiLcdDisplay::SetChatMessage(role, content);
+        if (!role || !content || (strcmp(role, "user") && strcmp(role, "assistant"))) return;
+        DisplayLockGuard lock(this);
+        gw_grok_text(role, content);
+        if (!strcmp(role, "user") && content[0]) gw_grok_state(2);   // question heard -> thinking until speech starts
+    }
+    void ClearChatMessages() override {
+        SpiLcdDisplay::ClearChatMessages();
+        DisplayLockGuard lock(this);
+        gw_grok_text("user", "");
+    }
     void SetupUI() override {
         SpiLcdDisplay::SetupUI();
         DisplayLockGuard lock(this);
+        // Old stock chat UI (robot emoji, orange status, subtitle bar) is never shown: gw_grok owns this page.
+        { lv_obj_t* old[] = {emoji_box_, status_bar_, bottom_bar_}; for (auto* o : old) if (o) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); }
 
         // Horizontal inset so labels stay inside the round mask
         lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.2, 0);

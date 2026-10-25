@@ -4,6 +4,7 @@
 #include "gw_faces.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 LV_FONT_DECLARE(gu_hero) LV_FONT_DECLARE(gu_num) LV_FONT_DECLARE(gu_sm) LV_FONT_DECLARE(gu_lab) LV_FONT_DECLARE(gu_icon) LV_FONT_DECLARE(gz_20)
 // RAM copies of the compact CJK fonts so a runtime fallback (full CJK font) can cover rare characters
 static lv_font_t f20_rt, f21_rt; static bool f_init=false;
@@ -42,6 +43,8 @@ static lv_color_t col(uint32_t h){ if(!night) return lv_color_hex(h);
 static lv_obj_t *root,*pg[GW_NPAGES],*dotbar,*dots[GW_NCORE],*chat,*sheet,*sheet_t,*sheet_b;
 static int cur=-1, dir=1;
 // face
+static lv_obj_t *r_row,*r_dot,*r_dec;
+static int f_ss=-1; static float f_sa=-1, s_from;  // second hand: last second, drawn angle (deg)
 static lv_obj_t *f_sec,*f_date,*f_time,*f_g[3],*f_gv[3],*f_glink2,*f_hands,*f_pill,*f_km; static int f_hh=-1,f_mm=-1;
 static lv_obj_t *r_card[2],*v_unit,*v_card,*v_row;
 // ride
@@ -94,6 +97,19 @@ static void bezel(lv_obj_t* p,int mode,bool dim){
 static lv_obj_t* gauge(lv_obj_t* p,int x,int y,uint32_t c,lv_obj_t** val){ lv_obj_t* g=arc(p,84,7,K_CARD2,c); lv_obj_align(g,LV_ALIGN_CENTER,x,y);
   *val=label(p,&gu_sm,K_TXT,x,y); return g; }
 // Thin analog hands (HomeView A): two round-capped lines + hub, redrawn only when the minute changes.
+enum { SEC_LEN=200, SEC_TAIL=30 };
+static void sec_pts(float deg,int cx,int cy,lv_point_precise_t* tip,lv_point_precise_t* tail){ float r=deg*0.01745329f, sn=sinf(r), cs=cosf(r);
+  tip->x=cx+SEC_LEN*sn+.5f; tip->y=cy-SEC_LEN*cs+.5f; tail->x=cx-SEC_TAIL*sn+.5f; tail->y=cy+SEC_TAIL*cs+.5f; }
+// Invalidate only the second hand's own bounding box (old + new pose), never the whole face.
+static void sec_inval(float deg){ if(deg<0||!f_hands) return; lv_area_t c; lv_obj_get_coords(f_hands,&c); lv_point_precise_t a,b;
+  sec_pts(deg,(c.x1+c.x2)/2,(c.y1+c.y2)/2,&a,&b);
+  lv_area_t r={(int32_t)LV_MIN(a.x,b.x)-4,(int32_t)LV_MIN(a.y,b.y)-4,(int32_t)LV_MAX(a.x,b.x)+4,(int32_t)LV_MAX(a.y,b.y)+4};
+  lv_obj_invalidate_area(f_hands,&r); }
+static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*0.006f; sec_inval(f_sa); }
+#define V_USCALE 144  /* 144/256 = 0.56 = mockup 54/96 */
+static void nav_layout(void){ lv_obj_update_layout(v_dist); lv_obj_update_layout(v_unit);
+  int wn=lv_obj_get_width(v_dist), wu=lv_obj_get_width(v_unit)*V_USCALE/256, gap=11, x0=(400-(wn+gap+wu))/2;
+  lv_obj_set_pos(v_dist,x0,0); lv_obj_set_pos(v_unit,x0+wn+gap,0); }
 static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t a; lv_obj_get_coords(f_hands,&a);
   int cx=(a.x1+a.x2)/2, cy=(a.y1+a.y2)/2; if(f_hh<0) return;
   int ha=((f_hh%12)*60+f_mm)/2, ma=f_mm*6;  // degrees, 0 = 12 o'clock
@@ -101,7 +117,11 @@ static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_a
   l.p1.x=cx; l.p1.y=cy; l.width=6; l.p2.x=cx+((118*lv_trigo_sin(ha))>>15); l.p2.y=cy-((118*lv_trigo_cos(ha))>>15); lv_draw_line(L,&l);
   l.width=3; l.p2.x=cx+((196*lv_trigo_sin(ma))>>15); l.p2.y=cy-((196*lv_trigo_cos(ma))>>15); lv_draw_line(L,&l);
   lv_draw_rect_dsc_t r; lv_draw_rect_dsc_init(&r); r.radius=LV_RADIUS_CIRCLE; r.bg_opa=LV_OPA_COVER; r.bg_color=col(K_TXT);
-  lv_area_t h={cx-8,cy-8,cx+8,cy+8}; lv_draw_rect(L,&r,&h); r.bg_color=col(K_BG); lv_area_t h2={cx-3,cy-3,cx+3,cy+3}; lv_draw_rect(L,&r,&h2); }
+  lv_area_t h={cx-8,cy-8,cx+8,cy+8}; lv_draw_rect(L,&r,&h);
+  if(f_sa>=0){ lv_draw_line_dsc_t q; lv_draw_line_dsc_init(&q); q.color=col(K_ORG); q.width=2; q.round_start=1; q.round_end=1;
+    sec_pts(f_sa,cx,cy,&q.p1,&q.p2); lv_draw_line(L,&q); }
+  r.bg_color=col(K_ORG); lv_area_t h3={cx-5,cy-5,cx+5,cy+5}; lv_draw_rect(L,&r,&h3);
+  r.bg_color=col(K_BG); lv_area_t h2={cx-2,cy-2,cx+2,cy+2}; lv_draw_rect(L,&r,&h2); }
 static lv_obj_t* pill(lv_obj_t* p,int w,int h,int x,int y){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); lv_obj_set_size(c,w,h);
   lv_obj_set_style_radius(c,h/2>36?36:h/2,0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_bg_color(c,col(K_CARD),0);
   lv_obj_remove_flag(c,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE); lv_obj_align(c,LV_ALIGN_CENTER,x,y); return c; }
@@ -136,17 +156,24 @@ void gw_faces_create(lv_obj_t* parent){
   lv_obj_t* p=pg[GW_PAGE_FACE]; bezel(p,0,false);
   f_sec=disc(p,10,K_ORG); lv_obj_add_flag(f_sec,LV_OBJ_FLAG_HIDDEN);
   f_date=label(p,F20,K_SEC,0,-83);
-  f_pill=pill(p,140,50,0,78); f_km=label(f_pill,F20,K_TXT,0,0);
+  f_pill=pill(p,180,50,0,78); f_km=label(f_pill,F20,K_TXT,0,0);
   f_time=label(p,&gu_hero,K_TXT,0,-22); lv_obj_set_style_text_letter_space(f_time,-4,0);
   f_g[0]=gauge(p,-100,100,K_GRN,&f_gv[0]); f_g[1]=gauge(p,0,112,K_ORG,&f_gv[1]); f_g[2]=gauge(p,100,100,K_CYAN,&f_gv[2]);
   f_glink2=arc(p,84,7,K_CARD2,K_BLUE); lv_obj_align(f_glink2,LV_ALIGN_CENTER,100,100); lv_obj_set_style_arc_opa(f_glink2,LV_OPA_TRANSP,LV_PART_MAIN);
   { lv_obj_t* hid[]={f_time,f_g[0],f_g[1],f_g[2],f_gv[0],f_gv[1],f_gv[2],f_glink2}; for(int i=0;i<8;i++) lv_obj_add_flag(hid[i],LV_OBJ_FLAG_HIDDEN); } // digital Ultra face retired
-  f_hands=box(p); lv_obj_add_event_cb(f_hands,hands_draw,LV_EVENT_DRAW_MAIN,NULL); f_hh=f_mm=-1;
+  for(int i=1;i<=12;i++){ bool q=i%3==0; char nb[4]; snprintf(nb,sizeof nb,"%d",i);   // gu_sm covers 0x20-0x7E: every digit present
+    lv_obj_t* n=label(p,&gu_sm,q?K_TXT:K_SEC,(178*lv_trigo_sin(i*30))>>15,-((178*lv_trigo_cos(i*30))>>15)); lv_label_set_text(n,nb); }
+  f_hands=box(p); lv_obj_add_event_cb(f_hands,hands_draw,LV_EVENT_DRAW_MAIN,NULL); f_hh=f_mm=-1; f_ss=-1; f_sa=-1;
   // ---- RIDE: orange speed sweep (minute ring lives on FACE only)
   p=pg[GW_PAGE_RIDE];
   r_arc=arc(p,360,12,K_CARD,K_ORG); lv_obj_center(r_arc); lv_obj_add_flag(r_arc,LV_OBJ_FLAG_HIDDEN);   // HomeView: no dial
   lv_obj_t* h=label(p,F20,K_SEC,0,-121); lv_label_set_text(h,"速度");
-  r_speed=label(p,&gu_hero,K_TXT,0,-37); lv_obj_set_style_text_letter_space(r_speed,-4,0);
+  r_row=lv_obj_create(p); lv_obj_remove_style_all(r_row); lv_obj_set_size(r_row,LV_SIZE_CONTENT,LV_SIZE_CONTENT); lv_obj_align(r_row,LV_ALIGN_CENTER,0,-37);
+  lv_obj_set_flex_flow(r_row,LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(r_row,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_END); lv_obj_set_style_pad_column(r_row,5,0);
+  lv_obj_remove_flag(r_row,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+  r_speed=lv_label_create(r_row); lv_obj_set_style_text_font(r_speed,&gu_hero,0); lv_obj_set_style_text_color(r_speed,col(K_TXT),0); lv_obj_set_style_text_letter_space(r_speed,-4,0);
+  r_dot=disc(r_row,16,K_TXT); lv_obj_set_style_margin_bottom(r_dot,10,0);
+  r_dec=lv_label_create(r_row); lv_obj_set_style_text_font(r_dec,&gu_hero,0); lv_obj_set_style_text_color(r_dec,col(K_TXT),0);
   r_unit=label(p,&gu_lab,K_SEC,0,29); lv_label_set_text(r_unit,"km/h");
   for(int i=0;i<2;i++){ int x=i?77:-77; r_card[i]=pill(p,146,70,x,102); r_f[i]=label(p,&gu_sm,K_TXT,x,90); r_fl[i]=label(p,F20,K_SEC,x,120); lv_label_set_text(r_fl[i],i?"用时":"里程 km"); }
   r_hint=label(p,F20,K_SEC,0,158); lv_label_set_text(r_hint,"打开 GrokWatch App");
@@ -170,11 +197,11 @@ void gw_faces_create(lv_obj_t* parent){
   v_img=lv_image_create(p); lv_obj_align(v_img,LV_ALIGN_CENTER,0,-108); lv_image_set_scale(v_img,640);
   lv_obj_set_style_image_recolor(v_img,col(K_TXT),0); lv_obj_set_style_image_recolor_opa(v_img,LV_OPA_COVER,0);
   // number + unit as two labels on one baseline row: unit readable (26 px) with a 14 px gap
-  v_row=lv_obj_create(p); lv_obj_remove_style_all(v_row); lv_obj_set_size(v_row,LV_SIZE_CONTENT,LV_SIZE_CONTENT); lv_obj_align(v_row,LV_ALIGN_CENTER,0,22);
-  lv_obj_set_flex_flow(v_row,LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(v_row,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_END,LV_FLEX_ALIGN_END); lv_obj_set_style_pad_column(v_row,14,0);
+  v_row=lv_obj_create(p); lv_obj_remove_style_all(v_row); lv_obj_set_size(v_row,400,gu_num.line_height); lv_obj_align(v_row,LV_ALIGN_CENTER,0,22);
   lv_obj_remove_flag(v_row,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   v_dist=lv_label_create(v_row); lv_obj_set_style_text_font(v_dist,&gu_num,0); lv_obj_set_style_text_color(v_dist,col(K_TXT),0); lv_obj_set_style_text_letter_space(v_dist,-1,0);
-  v_unit=lv_label_create(v_row); lv_obj_set_style_text_font(v_unit,&gu_sm,0); lv_obj_set_style_text_color(v_unit,col(K_SEC),0); lv_obj_set_style_pad_bottom(v_unit,9,0);
+  v_unit=lv_label_create(v_row); lv_obj_set_style_text_font(v_unit,&gu_num,0); lv_obj_set_style_text_color(v_unit,col(K_SEC),0);
+  lv_obj_set_style_transform_scale(v_unit,V_USCALE,0); lv_obj_set_style_transform_pivot_x(v_unit,0,0); lv_obj_set_style_transform_pivot_y(v_unit,gu_num.line_height-gu_num.base_line,0);
   v_card=pill(p,290,60,0,112);
   v_dir=label(v_card,F21,K_TXT,0,0); lv_obj_set_width(v_dir,260); lv_label_set_long_mode(v_dir,LV_LABEL_LONG_DOT);
   v_meta=label(p,F20,K_SEC,0,168);
@@ -257,6 +284,7 @@ void gw_faces_show(int page, const gw_state_t* s){
       lv_obj_set_style_bg_color(dots[i],col(on?K_ORG:K_TER),0); anim(dots[i],ax_w,w,on?24:7,160,0,NULL); }
     lv_obj_move_foreground(dotbar); { anim(dotbar,ax_opa,LV_OPA_COVER,LV_OPA_COVER,1,0,NULL); anim(dotbar,ax_opa,LV_OPA_COVER,0,400,1600,lv_anim_path_ease_in_out); }
   }
+  if(enter) gw_grok_visible(page==GW_PAGE_CHAT);  // the mint character IS the chat page (was never shown on device)
   if(page==GW_PAGE_CHAT){ lv_obj_add_flag(root,LV_OBJ_FLAG_HIDDEN); char b[8]; snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(c_time,b); return; }
   lv_obj_remove_flag(root,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(root);
   if(enter){ for(int i=1;i<GW_NPAGES;i++) (i==page)?lv_obj_remove_flag(pg[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN);
@@ -269,7 +297,11 @@ void gw_faces_show(int page, const gw_state_t* s){
   if(page==GW_PAGE_FACE){
     on_rim(f_sec,222,s->ss*6);
     { static const char* CN[]={"日","一","二","三","四","五","六"}; snprintf(b,sizeof b,"周%s %d",CN[s->wday%7],s->day); lv_label_set_text(f_date,b); (void)WE; }
-    snprintf(b,sizeof b,"今日 %.1f km",s->ride_km); lv_label_set_text(f_km,b);
+    snprintf(b,sizeof b,"Grok 额度 %s",s->grok_credit&&s->grok_credit[0]?s->grok_credit:"\xE2\x80\x94"); lv_label_set_text(f_km,b);  // never invent a number
+    if(s->ss!=f_ss){ float to=s->ss*6.f; bool step1=f_ss>=0&&(s->ss==(f_ss+1)%60)&&!enter;
+      f_ss=s->ss; lv_anim_delete(&f_sa,ax_sec);
+      if(step1){ s_from=to-6.f; if(s_from<0) s_from+=360.f; sec_inval(f_sa); f_sa=s_from; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_overshoot); }
+      else { sec_inval(f_sa); f_sa=to; sec_inval(f_sa); } }
     if(s->hh!=f_hh||s->mm!=f_mm){ f_hh=s->hh; f_mm=s->mm; lv_obj_invalidate(f_hands); }
     snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(f_time,b);
     t_bat=s->battery/100.f; uint32_t bc=s->charging?K_GRN:(s->battery<=20?K_RED:(s->battery<=40?K_YEL:K_GRN));
@@ -288,8 +320,9 @@ void gw_faces_show(int page, const gw_state_t* s){
     bool has=s->speed&&s->speed[0]; float v=0; if(has) sscanf(s->speed,"%f",&v);
     if(enter){ a_spd=v; t_spd=v; } else if(v!=t_spd){ anim(&t_spd,ax_spd,(int)(a_spd*10),(int)(v*10),400,0,NULL); t_spd=v; }
     if(prog>=1000) apply_prog();
-    if(has){ snprintf(b,sizeof b,"%d",(int)(v+0.5f)); lv_label_set_text(r_speed,b); lv_obj_set_style_text_color(r_speed,col(K_TXT),0);}
-    else { lv_label_set_text(r_speed,"--"); lv_obj_set_style_text_color(r_speed,col(K_TER),0); }
+    if(has){ int t10=(int)(v*10+0.5f); if(t10<0) t10=0; snprintf(b,sizeof b,"%d",t10/10); lv_label_set_text(r_speed,b); lv_obj_set_style_text_color(r_speed,col(K_TXT),0);
+      snprintf(b,sizeof b,"%d",t10%10); lv_label_set_text(r_dec,b); lv_obj_remove_flag(r_dot,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(r_dec,LV_OBJ_FLAG_HIDDEN); }
+    else { lv_label_set_text(r_speed,"--"); lv_obj_set_style_text_color(r_speed,col(K_TER),0); lv_obj_add_flag(r_dot,LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(r_dec,LV_OBJ_FLAG_HIDDEN); }
     snprintf(b,sizeof b,"%d:%02d",s->ride_min/60,s->ride_min%60); lv_label_set_text(r_f[1],b);
     if(s->nav_active&&s->nav_eta&&s->nav_eta[0]){ lv_label_set_text(r_f[0],s->nav_eta); lv_label_set_text(r_fl[0],"到达"); }
     else { snprintf(b,sizeof b,"%.1f",s->ride_km); lv_label_set_text(r_f[0],b); lv_label_set_text(r_fl[0],"里程 km"); }
@@ -305,7 +338,7 @@ void gw_faces_show(int page, const gw_state_t* s){
         lv_obj_set_style_bg_color(t_box[i],col(d?K_SEC:K_CARD),0); lv_obj_remove_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
       else lv_obj_add_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
     if(s->todo_open>s->n_todo){ snprintf(b,sizeof b,"还有 %d 条",s->todo_open-s->n_todo); lv_label_set_text(t_more,b); lv_obj_remove_flag(t_more,LV_OBJ_FLAG_HIDDEN);} else lv_obj_add_flag(t_more,LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(t_empty[2],s->todo_state==3?"服务器未启用待办\n请检查服务配置":s->todo_state==2?"连不上服务器\n检查服务与网络":"按蓝键说\n「记一下…」");
+    lv_label_set_text(t_empty[2],s->todo_state==3?"服务器未启用待办\n请检查服务配置":s->todo_state==2?"连不上服务器\n检查服务与网络":"长按说话\n添加待办");
     for(int i=0;i<3;i+=2) any?lv_obj_add_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_NAV){
     lv_obj_t* act[]={v_img,v_row,v_card,v_meta};
@@ -321,7 +354,7 @@ void gw_faces_show(int page, const gw_state_t* s){
         for(const char* q=src; *q && j<26; ){ if(!strncmp(q,"公里",6)||!strncmp(q,"千米",6)){ j+=snprintf(d+j,sizeof d-j,(j&&d[j-1]==' ')?"km":" km"); q+=6; } else if(!strncmp(q,"米",3)){ j+=snprintf(d+j,sizeof d-j,(j&&d[j-1]==' ')?"m":" m"); q+=3; }
           else if((unsigned char)*q<0x80){ if(!(*q==' '&&j&&d[j-1]==' ')) d[j++]=*q; q++; } else q++; }
         d[j]=0; char* sp=strrchr(d,' '); const char* un="";
-        if(sp){ *sp=0; un=sp+1; } lv_label_set_text(v_dist,d); lv_label_set_text(v_unit,un); } lv_label_set_text(v_dir,s->nav_dir?s->nav_dir:"");
+        if(sp){ *sp=0; un=sp+1; } lv_label_set_text(v_dist,d); lv_label_set_text(v_unit,un); nav_layout(); } lv_label_set_text(v_dir,s->nav_dir?s->nav_dir:"");
       snprintf(b,sizeof b,"%s  " "\xC2\xB7" "  ETA %s",s->nav_dur?s->nav_dur:"",s->nav_eta?s->nav_eta:""); lv_label_set_text(v_meta,b);
     } else {
       lv_obj_set_style_border_color(v_idle[0],col(s->ble?K_ORG:K_TER),0); lv_obj_set_style_border_opa(v_idle[0],s->ble?LV_OPA_80:LV_OPA_COVER,0);

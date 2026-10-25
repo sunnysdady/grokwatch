@@ -55,8 +55,9 @@ static int page=1, back_page=1; static bool night=false, dnd=false; static gw_cc
 // fake server-side to-do store (same JSON shape as /gw/todo)
 static int td_n=0, td_open=0, td_state=1; static const char* td_text[GW_TODO_ROWS]; static bool td_done[GW_TODO_ROWS];
 static void todo_tap(int r){ if(r<td_n){ td_done[r]=true; printf("  todo POST /gw/todo/done row=%d\n",r); } }
+static int sim_ss=40;
 static void render(void){ time_t t0=time(NULL); struct tm t; localtime_r(&t0,&t); (void)t;
-  gw_state_t s={.hh=21,.mm=18,.ss=40,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
+  gw_state_t s={.hh=21,.mm=18,.ss=sim_ss,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
   s.ble=gw_model_linked(true,now_us()); s.phone_batt=gw_m.phone_batt; s.ride_km=gw_m.ride_km; s.dnd=dnd;
   s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta; s.nav_icon=gw_m.has_icon?gw_m.icon:NULL;
   s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
@@ -123,6 +124,11 @@ int main(int argc,char**argv){
   gw_faces_sheet(NULL,NULL);
   // 7) face + Control Center
   page=1; render(); shot("face");
+  // second hand: 6 one-second spring ticks, 20 ms frames; dirty area per frame vs. the frozen face
+  { gif_n=0; gf_px=0; gf_cnt=0; flushed=0; for(int k=0;k<50;k++){ step(20); gif_frame("still"); } perf("face idle (no tick)");
+    gif_n=0; gf_px=0; gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0;
+    for(int k=0;k<6;k++){ sim_ss=(sim_ss+1)%60; render(); for(int f=0;f<50;f++){ step(20); gif_frame("sec"); } } perf("second hand tick (1 s)");
+    sim_ss=40; }
   SWIPE_UP(); shot("control_center");
   tap(233-60,233-70); tap(233+60,233+62); shot("control_center_bright_dnd");
   tap(233-60,233+62); shot("control_center_night");
@@ -168,7 +174,9 @@ int main(int argc,char**argv){
   nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0);
   td_n=3; td_open=2; td_state=1; td_text[0]="买水"; td_text[1]="给车胎打气"; td_text[2]="周日骑行路线"; td_done[0]=false; td_done[1]=false; td_done[2]=true;
   go(GW_PAGE_TODO,1); shot("n_todo"); td_n=0; td_open=0; render(); shot("n_todo_empty");
-  gw_grok_visible(true); gw_grok_state(0); shot("n_grok_idle"); gw_grok_visible(false);
+  go(0,-1); gw_grok_state(0); gw_grok_text("user",""); shot("n_grok_idle");
+  gw_grok_state(3); gw_grok_text("user","明天早上深圳会下雨吗？"); gw_grok_text("assistant","明早深圳多云转阵雨，降雨概率 60%，6 点到 9 点风力 3 级。建议带雨衣，路面湿滑注意刹车距离。"); shot("n_grok_speaking");
+  go(1,1);
   night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); page=1; render();
   // 9) Standby clock (day, night, minute drift)
   gw_grok_visible(false); go(1,1); gw_standby_create(lv_layer_top());
