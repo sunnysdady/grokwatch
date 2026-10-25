@@ -116,6 +116,15 @@ static void sec_inval(float deg){ if(deg<0||!f_hands) return; lv_area_t c; lv_ob
     int x0=b.x+(a.x-b.x)*t0, y0=b.y+(a.y-b.y)*t0, x1=b.x+(a.x-b.x)*t1, y1=b.y+(a.y-b.y)*t1;
     lv_area_t r={LV_MIN(x0,x1)-3,LV_MIN(y0,y1)-3,LV_MAX(x0,x1)+3,LV_MAX(y0,y1)+3}; lv_obj_invalidate_area(f_hands,&r); }
   lv_area_t hub={(c.x1+c.x2)/2-6,(c.y1+c.y2)/2-6,(c.x1+c.x2)/2+6,(c.y1+c.y2)/2+6}; lv_obj_invalidate_area(f_hands,&hub); }
+// 2.6.15: minute change used to invalidate the whole 466x466 hands box = a full-screen redraw (~0.9 s on device) every
+// minute, which froze the second hand. Invalidate only small boxes along the hour/minute hands (old + new pose).
+static void seg_inval(int cx,int cy,int deg,int len,int pad){ for(int k=0;k<8;k++){
+    int x0=cx+((len*k/8)*lv_trigo_sin(deg)>>15), y0=cy-((len*k/8)*lv_trigo_cos(deg)>>15), x1=cx+((len*(k+1)/8)*lv_trigo_sin(deg)>>15), y1=cy-((len*(k+1)/8)*lv_trigo_cos(deg)>>15);
+    lv_area_t r={LV_MIN(x0,x1)-pad,LV_MIN(y0,y1)-pad,LV_MAX(x0,x1)+pad,LV_MAX(y0,y1)+pad}; lv_obj_invalidate_area(f_hands,&r); } }
+static void hands_inval(void){ if(!f_hands||f_hh<0) return; lv_area_t c; lv_obj_get_coords(f_hands,&c); int cx=(c.x1+c.x2)/2, cy=(c.y1+c.y2)/2;
+  seg_inval(cx,cy,((f_hh%12)*60+f_mm)/2,118,6); seg_inval(cx,cy,f_mm*6,196,5);
+  lv_area_t hub={cx-8,cy-8,cx+8,cy+8}; lv_obj_invalidate_area(f_hands,&hub); }
+int gw_finish_on=1;
 static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*s_span*0.001f; if(f_sa>=360.f) f_sa-=360.f; sec_inval(f_sa); }
 #define V_USCALE 144  /* 144/256 = 0.56 = mockup 54/96 */
 static void nav_layout(void){ lv_obj_update_layout(v_dist); lv_obj_update_layout(v_unit);
@@ -138,21 +147,37 @@ static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_a
 // 2.6.14 dial finish: what the promo boards add around the screen, done inside the 466 px glass with no bitmaps.
 // Edge vignette (6 dark rings) + hairline inner ring + soft top-left light catch. Pure LVGL arcs: 0 B heap, drawn under
 // the page content only where an invalid area reaches r>=200 px (second hand tip stops at 200, so ticks never pay for it).
+// 2.6.15: the 2.6.14 version drew ~15 full-circle arcs per redraw strip -> full-screen redraws went from ~0.2 s to ~0.9 s
+// on device and froze the second hand at every minute change. Now the same finish (with a true smooth vignette) is
+// computed once per day/night into an ARGB8888 image in PSRAM (868 KB, 0 B internal) and blitted, clipped to the strip.
+#include "gw_mem.h"
+static uint8_t* fin_px; static int fin_night=-1; static lv_image_dsc_t fin_dsc;
+static void fin_build(bool nt){ if(!fin_px){ fin_px=(uint8_t*)gw_psram_calloc(466*466*4); if(!fin_px) return; }
+  float lr=nt?0xC9:255, lg=nt?0xC2:255, lb=nt?0xB4:255;            // light-catch colour
+  float hr=nt?0x8A:0xCF, hg=nt?0x7E:0xE3, hb=nt?0x6E:0xDC;          // hairline colour
+  for(int y=0;y<466;y++) for(int x=0;x<466;x++){ uint8_t* q=fin_px+(y*466+x)*4; float dx=x+.5f-233.f, dy=y+.5f-233.f, r=sqrtf(dx*dx+dy*dy);
+    if(r<210.f||r>233.5f){ q[0]=q[1]=q[2]=q[3]=0; continue; }
+    float t=(r-212.f)/21.f; t=t<0?0:(t>1?1:t); float av=0.36f*t*t;                       // vignette, black, up to 36 %
+    float wh=1.f-fabsf(r-228.f); wh=wh<0?0:wh; float ah=(nt?0.086f:0.133f)*wh;            // 1 px hairline
+    float w2=1.f-fabsf(r-226.5f)/1.6f; w2=w2<0?0:w2; float ang=atan2f(dy,dx)*57.29578f; if(ang<0) ang+=360.f;
+    float da=(ang-225.f)/30.f; float al=(nt?0.14f:0.28f)*w2*expf(-da*da);                  // light catch at 10:30
+    float cr=0,cg=0,cb=0,ca=av;                                                            // composite: black, then hairline, then light
+    float A=ah; cr=hr*A+cr*(1-A)*0; cg=hg*A; cb=hb*A; ca=A+ca*(1-A);
+    float B=al; cr=lr*B+cr*(1-B); cg=lg*B+cg*(1-B); cb=lb*B+cb*(1-B); ca=B+ca*(1-B);
+    if(ca<=0.002f){ q[0]=q[1]=q[2]=q[3]=0; continue; }
+    q[2]=(uint8_t)(cr/ca>255?255:cr/ca); q[1]=(uint8_t)(cg/ca>255?255:cg/ca); q[0]=(uint8_t)(cb/ca>255?255:cb/ca); q[3]=(uint8_t)(ca*255.f+.5f); }
+  memset(&fin_dsc,0,sizeof fin_dsc); fin_dsc.header.magic=LV_IMAGE_HEADER_MAGIC; fin_dsc.header.cf=LV_COLOR_FORMAT_ARGB8888;
+  fin_dsc.header.w=466; fin_dsc.header.h=466; fin_dsc.header.stride=466*4; fin_dsc.data_size=466*466*4; fin_dsc.data=fin_px;
+  fin_night=nt; }
 void gw_dial_finish(lv_layer_t* L,const lv_area_t* a,bool nt){
-  int cx=(a->x1+a->x2)/2, cy=(a->y1+a->y2)/2;
-  lv_draw_arc_dsc_t d; lv_draw_arc_dsc_init(&d); d.center.x=cx; d.center.y=cy; d.rounded=0;
-  // vignette: 11 x 2 px rings, quadratic falloff from the glass edge to r~212 (smooth on RGB565, no visible step)
-  d.color=lv_color_black(); d.width=2; d.start_angle=0; d.end_angle=360;
-  for(int i=0;i<11;i++){ int k=11-i; d.radius=233-i*2; d.opa=(uint8_t)(k*k*92/121); lv_draw_arc(L,&d); }
-  d.width=1; d.radius=228; d.color=lv_color_hex(nt?0x8A7E6E:0xCFE3DC); d.opa=nt?22:34; lv_draw_arc(L,&d);   // hairline: the "inner bezel" edge
-  static const int16_t S0[3]={198,184,170}, S1[3]={252,266,280}; static const uint8_t SO[3]={70,34,14};      // light catch, 10 o'clock
-  d.rounded=1; d.width=2; d.radius=227; d.color=lv_color_hex(nt?0xC9C2B4:0xFFFFFF);
-  for(int i=0;i<3;i++){ d.start_angle=S0[i]; d.end_angle=S1[i]; d.opa=nt?SO[i]/2:SO[i]; lv_draw_arc(L,&d); } }
+  if(fin_night!=(int)nt) fin_build(nt); if(!fin_px) return;
+  lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d); d.src=&fin_dsc; lv_area_t c={a->x1+(a->x2-a->x1+1-466)/2,a->y1+(a->y2-a->y1+1-466)/2,0,0};
+  c.x2=c.x1+465; c.y2=c.y1+465; lv_draw_image(L,&d,&c); }
 static void finish_cb(lv_event_t* e){ lv_area_t a; lv_obj_get_coords(lv_event_get_target_obj(e),&a);
   const lv_area_t* clip=&lv_event_get_layer(e)->_clip_area; int cx=(a.x1+a.x2)/2, cy=(a.y1+a.y2)/2;
   // skip when the invalid area sits fully inside r<200 (e.g. the second hand / hub)
   int dx=LV_MAX(LV_ABS(clip->x1-cx),LV_ABS(clip->x2-cx)), dy=LV_MAX(LV_ABS(clip->y1-cy),LV_ABS(clip->y2-cy));
-  if(dx*dx+dy*dy<200*200) return; gw_dial_finish(lv_event_get_layer(e),&a,night); }
+  if(!gw_finish_on||dx*dx+dy*dy<200*200) return; gw_dial_finish(lv_event_get_layer(e),&a,night); }
 static lv_obj_t* pill(lv_obj_t* p,int w,int h,int x,int y){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); lv_obj_set_size(c,w,h);
   lv_obj_set_style_radius(c,h/2>36?36:h/2,0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_bg_color(c,col(K_CARD),0);
   lv_obj_set_style_border_width(c,1,0); lv_obj_set_style_border_color(c,col(K_CARD2),0); lv_obj_set_style_border_opa(c,140,0);  // 2.6.14: hairline edge = glass card
@@ -430,7 +455,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     else if(s->usage_pct>=0) snprintf(b,sizeof b,"Grok Bot %d%%",s->usage_pct); else snprintf(b,sizeof b,"Grok Bot \xE2\x80\x94");   // never invent a number
     lv_label_set_text(f_km,b); lv_obj_update_layout(f_km); { int w=lv_obj_get_width(f_km)+44; lv_obj_set_width(f_pill,w<180?180:(w>300?300:w)); lv_obj_align(f_pill,LV_ALIGN_CENTER,0,78); }
     if(enter){ lv_anim_delete(&f_sa,ax_sec); sec_inval(f_sa); f_ss=s->ss; f_sa=s->ss*6.f; sec_inval(f_sa); } else gw_faces_sec(s->ss);
-    if(s->hh!=f_hh||s->mm!=f_mm){ f_hh=s->hh; f_mm=s->mm; lv_obj_invalidate(f_hands); }
+    if(s->hh!=f_hh||s->mm!=f_mm){ if(f_hh<0||enter) lv_obj_invalidate(f_hands); else hands_inval(); f_hh=s->hh; f_mm=s->mm; if(!enter) hands_inval(); }
     snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(f_time,b);
     t_bat=s->battery/100.f; uint32_t bc=s->charging?K_GRN:(s->battery<=20?K_RED:(s->battery<=40?K_YEL:K_GRN));
     lv_obj_set_style_arc_color(f_g[0],col(bc),LV_PART_INDICATOR);

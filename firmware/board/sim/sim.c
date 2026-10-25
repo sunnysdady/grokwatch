@@ -55,9 +55,9 @@ static int page=1, back_page=1; static bool night=false, dnd=false; static gw_cc
 // fake server-side to-do store (same JSON shape as /gw/todo)
 static int td_n=0, td_open=0, td_state=1; static const char* td_text[GW_TODO_ROWS]; static bool td_done[GW_TODO_ROWS];
 static void todo_tap(int r){ if(r<td_n){ td_done[r]=true; printf("  todo POST /gw/todo/done row=%d\n",r); } }
-static int sim_ss=40;
+static int sim_ss=40, sim_mm=18;
 static void render(void){ time_t t0=time(NULL); struct tm t; localtime_r(&t0,&t); (void)t;
-  gw_state_t s={.hh=21,.mm=18,.ss=sim_ss,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
+  gw_state_t s={.hh=21,.mm=sim_mm,.ss=sim_ss,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
   s.ble=gw_model_linked(true,now_us()); s.phone_batt=gw_m.phone_batt; s.ride_km=gw_m.ride_km; s.dnd=dnd;
   s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta; s.nav_icon=gw_m.has_icon?gw_m.icon:NULL; s.light_s=gw_model_light_left(now_us()); s.light_c=gw_m.light_c; s.nav_turn=gw_m.turn; s.usage_pct=gw_m.usage_pct; s.usage_reset=gw_m.usage_reset;
   s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
@@ -152,6 +152,8 @@ int main(int argc,char**argv){
   { gif_n=0; gf_px=0; gf_cnt=0; flushed=0; for(int k=0;k<50;k++){ step(20); gif_frame("still"); } perf("face idle (no tick)");
     gif_n=0; gf_px=0; gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0;
     for(int k=0;k<6;k++){ sim_ss=(sim_ss+1)%60; render(); for(int f=0;f<50;f++){ step(20); gif_frame("sec"); } } perf("second hand tick (1 s)");
+  { extern int gw_finish_on; for(int m=0;m<2;m++){ gw_finish_on=m; double a=now_ms(); for(int k=0;k<5;k++){ lv_obj_invalidate(lv_screen_active()); lv_refr_now(NULL);} printf("FULLREDRAW finish=%d: %.2f ms/frame (host)\n",m,(now_ms()-a)/5); } gw_finish_on=1; }
+  { int mm0=sim_mm; double a=now_ms(); for(int k=0;k<5;k++){ sim_mm=(sim_mm+1)%60; render(); lv_refr_now(NULL);} printf("MINUTECHANGE: %.2f ms/frame (host)\n",(now_ms()-a)/5); sim_mm=mm0; }
   { // 2.6.14 second-hand cadence: wall clock vs poll, with random 190-270 ms stalls like the device's slow frames
     for(int mode=0;mode<2;mode++){ int per=mode?50:1000; double wall=0.437, nextp=0; int prev=-1,n=0,skip=0,stall=0; double last=-1,mx=0,mn=9,sum=0; srand(7);
       sim_ss=0; render(); step(300);
