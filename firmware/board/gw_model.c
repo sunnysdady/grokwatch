@@ -47,9 +47,10 @@ static int one(uint8_t t,const uint8_t* p,int n,int64_t now){
   case 0x11: { gw_m.last_nav=now; const char* s;
       s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.dist,sizeof gw_m.dist,s,l); s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.road,sizeof gw_m.road,s,l);
       s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.dur,sizeof gw_m.dur,s,l);  s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.eta,sizeof gw_m.eta,s,l);
-      gw_m.light_s=0; gw_m.light_c=0;                 // optional 5th string "k=v;k=v" (docs/nav-0x11-ext.md); absent = old app
+      gw_m.light_s=0; gw_m.light_c=0; gw_m.turn[0]=0;                 // optional 5th string "k=v;k=v" (docs/nav-0x11-ext.md); absent = old app
       if(i<n){ s=cs(p,n,&i,&l); for(int k=0;k+1<l;){ int e=k; while(e<l&&s[e]!=';') e++;
           if(s[k]=='L'&&s[k+1]=='='){ int v=atoi(s+k+2); if(v>0&&v<=300){ gw_m.light_s=v; gw_m.light_t=now; } }
+          if(s[k]=='T'&&s[k+1]=='='){ int m=e-k-2; if(m>0&&m<4){ memcpy(gw_m.turn,s+k+2,m); gw_m.turn[m]=0; } }
           if(s[k]=='C'&&s[k+1]=='='&&k+2<e&&strchr("RGY",s[k+2])) gw_m.light_c=s[k+2];
           k=e+1; } }
       uint32_t sig=fnv(p,n); if(sig!=gw_m.nav_sig||!gw_m.nav_sig_t){ gw_m.nav_sig=sig; gw_m.nav_sig_t=now; }

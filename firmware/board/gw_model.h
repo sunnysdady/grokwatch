@@ -23,7 +23,8 @@ typedef struct {
   // turn-alert state for the current maneuver (see gw_model.c "turn alerts")
   int alert_lvl; int man_min_m; char man_road[96]; bool spd_have;
   uint32_t nav_sig; int64_t nav_sig_t;     // content hash of last NAV_DATA and when it last changed
-  int light_s; int64_t light_t; char light_c;  // 0x11 ext L=secs (1..300), C=R/G/Y; 0 = no light
+  int light_s; int64_t light_t; char light_c; char turn[4];  // turn: 0x11 ext T= (S L R SL SR HL HR UL UR A), "" = use bitmap
+  // 0x11 ext L=secs (1..300), C=R/G/Y; 0 = no light
   int usage_pct; char usage_reset[16];         // 0x50 Grok Bot usage (RAM only); -1 = unknown
 } gw_model_t;
 extern gw_model_t gw_m;

@@ -24,7 +24,7 @@ static void indev_read(lv_indev_t* i,lv_indev_data_t* data){ (void)i; data->poin
 static double now_ms(void);
 static double st_ms_sum=0, st_ms_max=0; static int st_n=0;
 static void step(int ms){ for(int t=0;t<ms;t+=10){ tick+=10; double a=now_ms(); lv_timer_handler(); double e=now_ms()-a; st_ms_sum+=e; if(e>st_ms_max) st_ms_max=e; st_n++; } }
-static int gif_n=0; static long gf_px=0; static int gf_cnt=0;
+static int gif_n=0; static long gf_px=0; static int gf_cnt=0; static void perf(const char* name);
 static double fr_ms_sum=0, fr_ms_max=0; static int fr_n=0;
 static double now_ms(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return t.tv_sec*1e3+t.tv_nsec/1e6; }
 static void frame(void){ double a=now_ms(); lv_refr_now(d); double e=now_ms()-a; fr_ms_sum+=e; if(e>fr_ms_max) fr_ms_max=e; fr_n++; }
@@ -59,7 +59,7 @@ static int sim_ss=40;
 static void render(void){ time_t t0=time(NULL); struct tm t; localtime_r(&t0,&t); (void)t;
   gw_state_t s={.hh=21,.mm=18,.ss=sim_ss,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
   s.ble=gw_model_linked(true,now_us()); s.phone_batt=gw_m.phone_batt; s.ride_km=gw_m.ride_km; s.dnd=dnd;
-  s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta; s.nav_icon=gw_m.has_icon?gw_m.icon:NULL; s.light_s=gw_model_light_left(now_us()); s.light_c=gw_m.light_c; s.usage_pct=gw_m.usage_pct; s.usage_reset=gw_m.usage_reset;
+  s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta; s.nav_icon=gw_m.has_icon?gw_m.icon:NULL; s.light_s=gw_model_light_left(now_us()); s.light_c=gw_m.light_c; s.nav_turn=gw_m.turn; s.usage_pct=gw_m.usage_pct; s.usage_reset=gw_m.usage_reset;
   s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
   s.n_todo=td_n; s.todo_open=td_open; s.todo_state=td_state; for(int i=0;i<td_n;i++){ s.todo_text[i]=td_text[i]; s.todo_done[i]=td_done[i]; }
   gw_faces_show(page,&s); }
@@ -92,6 +92,17 @@ static void v11_extra(const char* D){ char nm[48]; gw_grok_visible(false);
   gw_m.usage_pct=-1; gw_m.usage_reset[0]=0; go(GW_PAGE_FACE,1); snprintf(nm,sizeof nm,"v11_%s_face_usage_none",D); shot(nm);
   usage(42,"18:00"); go(GW_PAGE_FACE,1); snprintf(nm,sizeof nm,"v11_%s_face_usage_42",D); shot(nm);
   usage(100,"周一"); go(GW_PAGE_FACE,1); snprintf(nm,sizeof nm,"v11_%s_face_usage_100",D); shot(nm); gw_m.usage_pct=-1; }
+
+static void v12_extra(const char* D){ char nm[48]; gw_grok_visible(false); hello(); nav_on(1); icon_left(); page=GW_PAGE_NAV;
+  static const char* T[]={"S","L","R","SL","SR","HL","HR","UL","UR","A"};
+  for(int i=0;i<10;i++){ char ext[16]; snprintf(ext,sizeof ext,"T=%s",T[i]); rx5("350 米","科技园南路","12分钟","21:31",ext); step(260); snprintf(nm,sizeof nm,"v12_%s_turn_%s",D,T[i]); shot(nm); }
+  rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); icon_left(); step(260); snprintf(nm,sizeof nm,"v12_%s_turn_bitmap",D); shot(nm);
+  rx5("350 米","科技园南路","12分钟","21:31","T=R;L=23;C=R"); step(260); snprintf(nm,sizeof nm,"v12_%s_turn_R_light",D); shot(nm);
+  nav_on(0); }
+static void v12_gif(void){ gw_grok_visible(false); hello(); nav_on(1); page=GW_PAGE_NAV; rx5("350 米","科技园南路","12分钟","21:31","T=S"); step(300); frame();
+  flushed=0; gf_px=gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0; gif_n=0; rx5("180 米","科技园南路","11分钟","21:31","T=R"); for(int i=0;i<10;i++){ step(33); gif_frame("v12_turn"); }
+  rx5("180 米","科技园南路","11分钟","21:31","T=R;L=9;C=G"); for(int i=0;i<8;i++){ step(33); gif_frame("v12_turn"); }
+  perf("v12 turn change + light capsule (18 frames)"); nav_on(0); }
 static void hello(void){ uint8_t p[2]={82,0}; rx(0x01,p,2); }
 static void speed(float k){ int v=(int)(k*10); uint8_t p[2]={v&255,v>>8}; rx(0x20,p,2); }
 static void nav_on(int on){ uint8_t p[1]={on}; rx(0x10,p,1); }
@@ -172,7 +183,7 @@ int main(int argc,char**argv){
     gw_grok_text("assistant","能连上，我是你的私人助理，现在正在回你的话。手表的问题会经过 Slack 转到我这里，你直接问就行。"); snprintf(nm,sizeof nm,"v11_%s_longraw",D); shot(nm);
     gw_grok_text("user",""); for(int st=0;st<5;st++){ gw_grok_state(st); step(st==1?400:300); snprintf(nm,sizeof nm,"v11_%s_expr%d",D,st); shot(nm); }
     gw_grok_state(0); }
-  gw_grok_set_night(false); v11_extra("day"); go(0,-1); gw_grok_visible(true);
+  gw_grok_set_night(false); v11_extra("day"); v12_extra("day"); v12_gif(); go(0,-1); gw_grok_visible(true);
   // face v2 review: 3 variants x 5 states, day + night (subtitles cleared so the face reads alone)
   gw_grok_text("user",""); for(int n=0;n<2;n++){ gw_grok_set_night(n); for(int v=0;v<3;v++){ gw_grok_variant(v); for(int st=0;st<5;st++){ char nm[40];
     gw_grok_state(st); step(st==1?400:300); snprintf(nm,sizeof nm,"fv%d_%s_s%d",v,n?"night":"day",st); shot(nm); } } }
@@ -203,7 +214,7 @@ int main(int argc,char**argv){
   // 8c) night pass over every core page (same model state as the day shots)
   gw_grok_visible(false); night=true; gw_faces_set_night(true); gw_faces_create(lv_screen_active());
   go(1,1); shot("n_face"); speed(23.4f); go(2,1); shot("n_ride");
-  nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0); v11_extra("night");
+  nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0); v11_extra("night"); v12_extra("night");
   td_n=3; td_open=2; td_state=1; td_text[0]="买水"; td_text[1]="给车胎打气"; td_text[2]="周日骑行路线"; td_done[0]=false; td_done[1]=false; td_done[2]=true;
   go(GW_PAGE_TODO,1); shot("n_todo"); td_n=0; td_open=0; render(); shot("n_todo_empty");
   go(0,-1); gw_grok_state(0); gw_grok_text("user",""); shot("n_grok_idle");

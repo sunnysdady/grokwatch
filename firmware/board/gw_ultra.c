@@ -60,8 +60,9 @@ static lv_obj_t *r_arc,*r_speed,*r_unit,*r_f[2],*r_fl[2],*r_hint;
 static lv_obj_t *sh_scroll,*sh_app,*sh_t,*sh_b;
 static lv_obj_t *cc,*cc_tile[GW_CC_N],*cc_ic[GW_CC_N],*cc_lb[GW_CC_N],*cc_val[GW_CC_N],*cc_stat; static void (*cc_cb)(int);
 // nav
-static lv_obj_t *v_img,*v_dist,*v_dir,*v_meta,*v_idle[4],*v_lt,*v_ltd,*v_ltn;
-static lv_image_dsc_t v_dsc; static uint8_t v_px[48*48]; static uint8_t v_last[288]; static bool v_has=false;
+static lv_obj_t *v_img,*v_dist,*v_dir,*v_meta,*v_idle[4],*v_lt,*v_ltd,*v_ltn,*v_vec;
+static char v_turn[4]; static bool v_lt_on; static float v_k=1.f;
+static lv_image_dsc_t v_dsc; static uint8_t v_px[96*96]; static uint8_t v_last[288]; static bool v_has=false;
 // chat deco
 static lv_obj_t *c_time;
 // animation targets
@@ -156,6 +157,45 @@ static bool slide_on=true; void gw_faces_set_slide(bool on){ slide_on=on; }
 void gw_faces_dir(int d){ dir=d<0?-1:1; }
 int gw_faces_page_x(void){ return (cur>0&&cur<GW_NPAGES&&pg[cur])?lv_obj_get_x(pg[cur]):0; }
 
+// ---------- 2.6.12 vector turn arrows (Apple Maps-like: one stroke weight, round caps/joins, rounded head) ----------
+#define VA 120   /* arrow box, px */
+#define VW 18    /* stroke width */
+static float vcx,vcy;
+#define K(v,c) ((c)+((v)-(c))*v_k)
+static void vline(lv_layer_t* L,lv_color_t c,int w,float x1,float y1,float x2,float y2){ x1=K(x1,vcx); x2=K(x2,vcx); y1=K(y1,vcy); y2=K(y2,vcy); w=(int)(w*v_k+.5f); lv_draw_line_dsc_t d; lv_draw_line_dsc_init(&d);
+  d.color=c; d.width=w; d.round_start=1; d.round_end=1; d.p1.x=x1; d.p1.y=y1; d.p2.x=x2; d.p2.y=y2; lv_draw_line(L,&d); }
+static void vhead(lv_layer_t* L,lv_color_t c,float x,float y,float ang){   // head base centred at (x,y), pointing along ang (deg, 0=up, cw)
+  x=K(x,vcx); y=K(y,vcy); float s=sinf(ang*0.0174533f), k=-cosf(ang*0.0174533f), px=-k, py=s; float z=v_k;   // dir=(s,k), perp=(px,py)
+  float tx=x+s*28*z, ty=y+k*28*z, ax=x+px*25*z, ay=y+py*25*z, bx=x-px*25*z, by=y-py*25*z; float sv=v_k; v_k=1;
+  lv_draw_triangle_dsc_t t; lv_draw_triangle_dsc_init(&t); t.color=c; t.opa=LV_OPA_COVER;
+  t.p[0].x=tx; t.p[0].y=ty; t.p[1].x=ax; t.p[1].y=ay; t.p[2].x=bx; t.p[2].y=by; lv_draw_triangle(L,&t);
+  vline(L,c,7,tx,ty,ax,ay); vline(L,c,7,ax,ay,bx,by); vline(L,c,7,bx,by,tx,ty); v_k=sv; }   // 3.5 px round corners on the head
+static void vdraw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t a; lv_obj_get_coords(v_vec,&a);
+  float cx=a.x1+VA/2, cy=a.y1+VA/2; vcx=cx; vcy=cy; lv_color_t c=col(K_TXT); const char* t=v_turn; float m=(t[0]=='L'||t[1]=='L')?-1:1;
+  #define X(v) (cx+m*(v))
+  if(!strcmp(t,"S")){ vline(L,c,VW,cx,cy+46,cx,cy-14); vhead(L,c,cx,cy-20,0); }
+  else if(!strcmp(t,"L")||!strcmp(t,"R")){ vline(L,c,VW,X(-20),cy+46,X(-20),cy-2); vline(L,c,VW,X(-20),cy-2,X(-4),cy-18); vline(L,c,VW,X(-4),cy-18,X(16),cy-18); vhead(L,c,X(20),cy-18,90*m); }
+  else if(!strcmp(t,"SL")||!strcmp(t,"SR")){ vline(L,c,VW,X(-12),cy+46,X(-12),cy+8); vline(L,c,VW,X(-12),cy+8,X(12),cy-16); vhead(L,c,X(16),cy-20,45*m); }
+  else if(!strcmp(t,"HL")||!strcmp(t,"HR")){ vline(L,c,VW,X(-28),cy+46,X(-28),cy-34); vline(L,c,VW,X(-28),cy-34,X(2),cy-4); vhead(L,c,X(6),cy,135*m); }
+  else if(!strcmp(t,"UL")||!strcmp(t,"UR")){ m=-m; vline(L,c,VW,X(-20),cy+46,X(-20),cy-12);   // U-turn: up, round 180 deg arc, back down
+    lv_draw_arc_dsc_t ar; lv_draw_arc_dsc_init(&ar); ar.color=c; ar.width=VW; ar.rounded=1; ar.width=(int)(VW*v_k+.5f); ar.radius=(int)((20+VW/2)*v_k); ar.center.x=K(X(0),vcx); ar.center.y=K(cy-12,vcy); ar.start_angle=180; ar.end_angle=360; lv_draw_arc(L,&ar);
+    vline(L,c,VW,X(20),cy-12,X(20),cy+8); vhead(L,c,X(20),cy+12,180); }
+  else if(!strcmp(t,"A")){ lv_draw_arc_dsc_t ar; lv_draw_arc_dsc_init(&ar); ar.color=c; ar.width=(int)(12*v_k+.5f); ar.radius=(int)(34*v_k); ar.center.x=cx; ar.center.y=cy; ar.start_angle=0; ar.end_angle=360; lv_draw_arc(L,&ar);
+    lv_draw_rect_dsc_t r; lv_draw_rect_dsc_init(&r); r.radius=LV_RADIUS_CIRCLE; r.bg_color=c; r.bg_opa=LV_OPA_COVER; int rr=(int)(13*v_k); lv_area_t d={cx-rr,cy-rr,cx+rr,cy+rr}; lv_draw_rect(L,&r,&d); }
+  #undef X
+}
+static bool vknown(const char* t){ static const char* K[]={"S","L","R","SL","SR","HL","HR","UL","UR","A"}; for(int i=0;i<10;i++) if(t&&!strcmp(t,K[i])) return true; return false; }
+// 1-bit 48x48 -> 96x96 A8: 2x bilinear upsample of a 3x3-softened mask, then drawn with image antialiasing (no stair steps)
+static void smooth_icon(const uint8_t* ic){ static uint8_t s[48*48];
+  for(int y=0;y<48;y++) for(int x=0;x<48;x++){ int acc=0; for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++){ int xx=x+dx, yy=y+dy;
+      if(xx<0||yy<0||xx>47||yy>47) continue; int b=(ic[(yy*48+xx)/8]>>(7-((yy*48+xx)%8)))&1; acc+=b*((dx==0&&dy==0)?4:(dx==0||dy==0)?2:1); }
+    s[y*48+x]=(uint8_t)(acc*255/16); }
+  for(int y=0;y<96;y++) for(int x=0;x<96;x++){ float fx=(x+.5f)/2-.5f, fy=(y+.5f)/2-.5f; int x0=(int)floorf(fx), y0=(int)floorf(fy); float ax=fx-x0, ay=fy-y0;
+    #define P(X,Y) ((X)<0||(Y)<0||(X)>47||(Y)>47?0:s[(Y)*48+(X)])
+    float v=(1-ax)*(1-ay)*P(x0,y0)+ax*(1-ay)*P(x0+1,y0)+(1-ax)*ay*P(x0,y0+1)+ax*ay*P(x0+1,y0+1);
+    #undef P
+    int o=(int)((v-64)*255/127); v_px[y*96+x]=o<0?0:(o>255?255:o); } }   // re-threshold softly: crisp but anti-aliased edge
+
 void gw_faces_create(lv_obj_t* parent){
   if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); root=NULL; cur=-1; }
   // chat-page decoration sits right above the native container (index 1), under xiaozhi's emoji/status labels
@@ -205,7 +245,9 @@ void gw_faces_create(lv_obj_t* parent){
   // ---- NAV: big turn arrow
   p=pg[GW_PAGE_NAV];
   v_has=false;  // new image object: force the cached arrow to be re-applied (night toggle recreates pages mid-nav)
-  v_img=lv_image_create(p); lv_obj_align(v_img,LV_ALIGN_CENTER,0,-108); lv_image_set_scale(v_img,640);
+  v_img=lv_image_create(p); lv_obj_align(v_img,LV_ALIGN_CENTER,0,-108); lv_image_set_scale(v_img,320); lv_image_set_antialias(v_img,true);
+  v_vec=lv_obj_create(p); lv_obj_remove_style_all(v_vec); lv_obj_set_size(v_vec,VA,VA); lv_obj_align(v_vec,LV_ALIGN_CENTER,0,-108); lv_obj_remove_flag(v_vec,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(v_vec,vdraw,LV_EVENT_DRAW_MAIN,NULL); lv_obj_add_flag(v_vec,LV_OBJ_FLAG_HIDDEN); v_turn[0]=0; v_lt_on=false;
   lv_obj_set_style_image_recolor(v_img,col(K_TXT),0); lv_obj_set_style_image_recolor_opa(v_img,LV_OPA_COVER,0);
   // number + unit as two labels on one baseline row: unit readable (26 px) with a 14 px gap
   v_row=lv_obj_create(p); lv_obj_remove_style_all(v_row); lv_obj_set_size(v_row,400,gn_dist.line_height); lv_obj_align(v_row,LV_ALIGN_CENTER,0,8);
@@ -275,6 +317,7 @@ void gw_cc_open(const gw_cc_t* st,void (*on_tap)(int)){ if(!cc) return; if(st&&d
 bool gw_cc_is_open(void){ return cc&&!lv_obj_has_flag(cc,LV_OBJ_FLAG_HIDDEN); }
 bool gw_faces_sheet_open(void){ return sheet&&!lv_obj_has_flag(sheet,LV_OBJ_FLAG_HIDDEN); }
 
+
 // ---------- animations ----------
 static void ax_x(void* o,int32_t v){ lv_obj_set_x((lv_obj_t*)o,v); }
 static void ax_y(void* o,int32_t v){ lv_obj_set_y((lv_obj_t*)o,v); }
@@ -290,6 +333,15 @@ static void apply_prog(void){ float k=prog/1000.f;
 static void ax_prog(void* o,int32_t v){ (void)o; prog=v; apply_prog(); }
 static void ax_spd(void* o,int32_t v){ (void)o; a_spd=v/10.f; if(prog>=1000) apply_prog(); }
 static void ax_img(void* o,int32_t v){ lv_obj_set_style_image_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
+static void hide_done(lv_anim_t* a){ lv_obj_add_flag((lv_obj_t*)a->var,LV_OBJ_FLAG_HIDDEN); }
+// 200 ms ease-out turn change: fade 0->1 + scale 0.94->1 (no overshoot)
+static void ax_vk(void* o,int32_t v){ v_k=v/1000.f; lv_obj_invalidate((lv_obj_t*)o); }
+static void ax_iscale(void* o,int32_t v){ lv_image_set_scale((lv_obj_t*)o,v); }
+static void turn_in(lv_obj_t* o){ anim(o,ax_opa,0,LV_OPA_COVER,200,0,NULL);   // no transform layer: scale is applied in geometry (vector) / image scale (bitmap)
+  if(o==v_vec) anim(o,ax_vk,940,1000,200,0,NULL); else anim(o,ax_iscale,300,320,200,0,NULL); }
+static void fade_show(lv_obj_t* o,bool on,bool* st){ if(on==*st) return; *st=on; if(on){ lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN); anim(o,ax_opa,0,LV_OPA_COVER,180,0,NULL); }
+  else { lv_anim_delete(o,ax_opa); lv_anim_t x; lv_anim_init(&x); lv_anim_set_var(&x,o); lv_anim_set_exec_cb(&x,ax_opa); lv_anim_set_values(&x,lv_obj_get_style_opa(o,0),0);
+    lv_anim_set_duration(&x,140); lv_anim_set_path_cb(&x,lv_anim_path_ease_out); lv_anim_set_completed_cb(&x,hide_done); lv_anim_start(&x); } }   // exit faster than enter
 
 void gw_faces_show(int page, const gw_state_t* s){
   if(!root) return;
@@ -317,7 +369,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     lv_label_set_text(f_km,b); lv_obj_update_layout(f_km); { int w=lv_obj_get_width(f_km)+44; lv_obj_set_width(f_pill,w<180?180:(w>300?300:w)); lv_obj_align(f_pill,LV_ALIGN_CENTER,0,78); }
     if(s->ss!=f_ss){ float to=s->ss*6.f; bool step1=f_ss>=0&&(s->ss==(f_ss+1)%60)&&!enter;
       f_ss=s->ss; lv_anim_delete(&f_sa,ax_sec);
-      if(step1){ s_from=to-6.f; if(s_from<0) s_from+=360.f; sec_inval(f_sa); f_sa=s_from; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_overshoot); }
+      if(step1){ s_from=to-6.f; if(s_from<0) s_from+=360.f; sec_inval(f_sa); f_sa=s_from; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_ease_out); }   // 2.6.12: no bounce
       else { sec_inval(f_sa); f_sa=to; sec_inval(f_sa); } }
     if(s->hh!=f_hh||s->mm!=f_mm){ f_hh=s->hh; f_mm=s->mm; lv_obj_invalidate(f_hands); }
     snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(f_time,b);
@@ -361,26 +413,29 @@ void gw_faces_show(int page, const gw_state_t* s){
     lv_label_set_text(t_empty[2],s->todo_state==3?"服务器未启用待办\n请检查服务配置":s->todo_state==2?"连不上服务器\n检查服务与网络":"长按说话\n添加待办");
     for(int i=0;i<3;i+=2) any?lv_obj_add_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_NAV){
-    lv_obj_t* act[]={v_img,v_row,v_card,v_meta}; if(!s->nav_active) lv_obj_add_flag(v_lt,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t* act[]={v_img,v_row,v_card,v_meta}; if(!s->nav_active){ lv_obj_add_flag(v_lt,LV_OBJ_FLAG_HIDDEN); v_lt_on=false; lv_obj_add_flag(v_vec,LV_OBJ_FLAG_HIDDEN); v_turn[0]=0; }
     for(int i=0;i<4;i++) s->nav_active?lv_obj_remove_flag(act[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(act[i],LV_OBJ_FLAG_HIDDEN);
     for(int i=0;i<4;i+=(i==0?2:1)) s->nav_active?lv_obj_add_flag(v_idle[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(v_idle[i],LV_OBJ_FLAG_HIDDEN);
     if(s->nav_active){
-      if(s->nav_icon&&(!v_has||memcmp(v_last,s->nav_icon,288))){ memcpy(v_last,s->nav_icon,288); v_has=true;
-        for(int i=0;i<48*48;i++) v_px[i]=(s->nav_icon[i/8]>>(7-(i%8))&1)?0xFF:0;
-        memset(&v_dsc,0,sizeof v_dsc); v_dsc.header.cf=LV_COLOR_FORMAT_A8; v_dsc.header.w=48; v_dsc.header.h=48; v_dsc.header.stride=48;
-        v_dsc.data=v_px; v_dsc.data_size=sizeof v_px; lv_image_set_src(v_img,&v_dsc); lv_obj_invalidate(v_img);
-        anim(v_img,ax_img,0,LV_OPA_COVER,220,0,NULL); } // arrow crossfade-in on turn change
+      bool vec=vknown(s->nav_turn);
+      if(vec){ if(strcmp(v_turn,s->nav_turn)){ snprintf(v_turn,sizeof v_turn,"%s",s->nav_turn); lv_obj_invalidate(v_vec); turn_in(v_vec); }
+        lv_obj_remove_flag(v_vec,LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(v_img,LV_OBJ_FLAG_HIDDEN); }
+      else { if(v_turn[0]){ v_turn[0]=0; v_has=false; } lv_obj_add_flag(v_vec,LV_OBJ_FLAG_HIDDEN);
+        if(s->nav_icon&&(!v_has||memcmp(v_last,s->nav_icon,288))){ memcpy(v_last,s->nav_icon,288); v_has=true; smooth_icon(s->nav_icon);
+          memset(&v_dsc,0,sizeof v_dsc); v_dsc.header.magic=LV_IMAGE_HEADER_MAGIC; v_dsc.header.cf=LV_COLOR_FORMAT_A8; v_dsc.header.w=96; v_dsc.header.h=96; v_dsc.header.stride=96;
+          v_dsc.data=v_px; v_dsc.data_size=sizeof v_px; lv_image_set_src(v_img,&v_dsc); lv_obj_invalidate(v_img); turn_in(v_img); } }
       { char d[32]; const char* src=s->nav_dist?s->nav_dist:""; int j=0;
         for(const char* q=src; *q && j<26; ){ if(!strncmp(q,"公里",6)||!strncmp(q,"千米",6)){ j+=snprintf(d+j,sizeof d-j,(j&&d[j-1]==' ')?"km":" km"); q+=6; } else if(!strncmp(q,"米",3)){ j+=snprintf(d+j,sizeof d-j,(j&&d[j-1]==' ')?"m":" m"); q+=3; }
           else if((unsigned char)*q<0x80){ if(!(*q==' '&&j&&d[j-1]==' ')) d[j++]=*q; q++; } else q++; }
         d[j]=0; char* sp=strrchr(d,' '); const char* un="";
-        if(sp){ *sp=0; un=sp+1; } lv_label_set_text(v_dist,d); lv_label_set_text(v_unit,un); nav_layout(); } lv_label_set_text(v_dir,s->nav_dir?s->nav_dir:"");
+        if(sp){ *sp=0; un=sp+1; } if(strcmp(lv_label_get_text(v_dist),d)||strcmp(lv_label_get_text(v_unit),un)){ lv_label_set_text(v_dist,d); lv_label_set_text(v_unit,un); nav_layout(); } }   // unchanged text: no redraw/flicker
+      if(strcmp(lv_label_get_text(v_dir),s->nav_dir?s->nav_dir:"")) lv_label_set_text(v_dir,s->nav_dir?s->nav_dir:"");
       { bool hd=s->nav_dur&&s->nav_dur[0], he=s->nav_eta&&s->nav_eta[0];   // no ETA: show only what we have, never a dangling "ETA"
         if(hd&&he) snprintf(b,sizeof b,"%s  " "\xC2\xB7" "  ETA %s",s->nav_dur,s->nav_eta); else if(hd) snprintf(b,sizeof b,"剩余 %s",s->nav_dur); else if(he) snprintf(b,sizeof b,"ETA %s",s->nav_eta); else b[0]=0;
         lv_label_set_text(v_meta,b); b[0]?lv_obj_remove_flag(v_meta,LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(v_meta,LV_OBJ_FLAG_HIDDEN); }
       if(s->light_s>0){ snprintf(b,sizeof b,"%d",s->light_s); lv_label_set_text(v_ltn,b);
-        uint32_t lc=s->light_c=='G'?K_GRN:(s->light_c=='Y'?K_YEL:K_RED); lv_obj_set_style_bg_color(v_ltd,col(lc),0); lv_obj_remove_flag(v_lt,LV_OBJ_FLAG_HIDDEN); }
-      else lv_obj_add_flag(v_lt,LV_OBJ_FLAG_HIDDEN);
+        uint32_t lc=s->light_c=='G'?K_GRN:(s->light_c=='Y'?K_YEL:K_RED); lv_obj_set_style_bg_color(v_ltd,col(lc),0); fade_show(v_lt,true,&v_lt_on); }
+      else fade_show(v_lt,false,&v_lt_on);
     } else {
       lv_obj_set_style_border_color(v_idle[0],col(K_TER),0); lv_obj_set_style_border_opa(v_idle[0],LV_OPA_COVER,0);
       lv_obj_set_style_text_color(v_idle[1],col(K_SEC),0);

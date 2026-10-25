@@ -30,6 +30,7 @@ static uint32_t g_now, g_pool_at, g_morph_at;
 static uint8_t g_pool_pos;
 static float g_points[2][48][2], g_from[2][48][2], g_to[2][48][2];
 static void apply_skin(void);
+static void g_fade(lv_obj_t* o,uint32_t ms);
 #define GW_SUB_W 260   // subtitle width: inside the 466 px round screen's chord at the subtitle rows, 18 px margin
 static const char* const HINT[]={"长按说话","正在聆听…","思考中…","","离线"};
 static lv_obj_t* rect(lv_obj_t* p,int w,int h,int r,uint32_t c){ lv_obj_t* o=lv_obj_create(p); lv_obj_remove_style_all(o); lv_obj_set_size(o,w,h);
@@ -107,7 +108,8 @@ static void draw_avatar(lv_event_t* event){
   if(g_st==2){ gx=12; gy=-11; }
   // eye size per variant/state
   // 2.6.11: every variant and state uses round eyes (Sunny: no long/slit eyes). Never taller or wider than 1.2:1.
-  int ew=30, eh=30; if(g_st==1){ ew+=3; eh+=3; }
+  static float es=30; float et=g_st==1?33.f:30.f; es+=(et-es)*.35f; if(fabsf(et-es)<.2f) es=et;   // ~200 ms ease-out between states at 33 ms ticks
+  int ew=(int)(es+.5f), eh=ew;
   int sep=32, ey=fy-6;
   uint32_t bk=g_now%4300; float open=bk<70?1-bk/70.f:(bk<160?(bk-70)/90.f:1); if(open<.12f) open=.12f;
   if(g_st==2) open=open<.85f?open:.85f;
@@ -187,10 +189,16 @@ void gw_grok_state(int st){ if(st<0||st>4) return;
     for(int i=0;i<7;i++) st==1?lv_obj_remove_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN);
     for(int i=0;i<3;i++) st==2?lv_obj_remove_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN);
   }
-  if(g_stat) lv_label_set_text(g_stat,HINT[st]); }
+  if(g_user&&g_sub){ static bool sub_off=false; bool off=st==1;   // listening: level bars sit where the subtitles are -> fade subtitles out, back in after
+    if(off&&!sub_off){ lv_obj_set_style_opa(g_user,0,0); lv_obj_set_style_opa(g_sub,0,0); } else if(!off&&sub_off){ g_fade(g_user,180); g_fade(g_sub,180); } sub_off=off; }
+  if(g_stat&&strcmp(lv_label_get_text(g_stat),HINT[st])){ lv_label_set_text(g_stat,HINT[st]); if(HINT[st][0]) g_fade(g_stat,160); } }
 void gw_grok_level(int l){ g_lvl=l<0?0:(l>100?100:l); }
 void gw_grok_status(const char* s){ if(g_stat&&s) lv_label_set_text(g_stat,s); }
+static void gx_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
+static void g_fade(lv_obj_t* o,uint32_t ms){ lv_anim_delete(o,gx_opa); lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,o); lv_anim_set_exec_cb(&a,gx_opa);
+  lv_anim_set_values(&a,60,LV_OPA_COVER); lv_anim_set_duration(&a,ms); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
 void gw_grok_text(const char* role,const char* t){ if(!g_root||!t) return;
+  bool user=role&&!strcmp(role,"user"); lv_obj_t* tgt=user?g_user:g_reply; bool changed=strcmp(lv_label_get_text(tgt),t)!=0;
   if(role&&!strcmp(role,"user")){ lv_label_set_text(g_user,t); lv_label_set_text(g_reply,""); }
   else lv_label_set_text(g_reply,t);
   { const char* rt=lv_label_get_text(g_reply); const lv_font_t* f=lv_obj_get_style_text_font(g_reply,0); lv_point_t sz;
@@ -199,7 +207,8 @@ void gw_grok_text(const char* role,const char* t){ if(!g_root||!t) return;
         if((sz.y+4)/(lv_font_get_line_height(f)+4)>lines) lo=m+1; else hi=m; } w=lo+2>GW_SUB_W?GW_SUB_W:lo+2; }
     lv_obj_set_width(g_reply,w); lv_obj_align(g_reply,LV_ALIGN_TOP_MID,0,0); }
   lv_obj_update_layout(g_sub); lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF);
-  if(g_stat&&g_st==3) lv_label_set_text(g_stat,""); }   // while speaking only the subtitle shows status (no double text)
+  if(g_stat&&g_st==3) lv_label_set_text(g_stat,"");
+  if(changed&&t[0]) g_fade(user?g_user:g_sub,180); }   // new sentence: 180 ms ease-out fade-in (replaces, never stacks)   // while speaking only the subtitle shows status (no double text)
 static void apply_skin(void){ if(!g_root) return;
   lv_obj_set_style_bg_color(g_root,lv_color_hex(SK->bg),0);
   for(int i=0;i<7;i++) lv_obj_set_style_bg_color(g_bar[i],lv_color_hex(SK->accent),0);

@@ -18,6 +18,7 @@ typedef struct {
   int n_todo, todo_open, todo_state; const char* todo_text[GW_TODO_ROWS]; bool todo_done[GW_TODO_ROWS];
   const char* grok_credit;          // legacy, unused since 2.6.11
   int usage_pct; const char* usage_reset; // Grok Bot usage from the app (0x50); usage_pct<0 = unknown -> "—"
+  const char* nav_turn;              // vector turn code (2.6.12) or NULL/"" = smoothed bitmap
   int light_s; char light_c;         // nav traffic-light countdown (0 = none), colour R/G/Y (0 = unknown)
 } gw_state_t;
 // carousel = CHAT..NAV (GW_NCORE pages, shown in dots).
