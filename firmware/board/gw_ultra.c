@@ -35,9 +35,13 @@ const lv_font_t* gw_f_status(void){ gw_f20(); return f20_rt.fallback?f20_rt.fall
 // palette (watchOS dark): pure black, international orange accent
 // HomeView theme: one deep-teal surface, white hero, mint accent (K_ORG keeps its name, now mint).
 enum { K_BG=0x213F3B, K_TXT=0xF4F6F2, K_SEC=0xB4C8C0, K_TER=0x55716C, K_CARD=0x2C4E49, K_CARD2=0x3A5C57, K_ORG=0xE8EFC4, K_GRN=0x30D158, K_RED=0xFF453A, K_CYAN=0x64D2FF, K_BLUE=0x0A84FF, K_YEL=0xFFD60A };
+// Apple system colours (dark appearance), used only where watchOS / Apple Home colour a function: second hand, CC icons and on-states.
+enum { A_ORANGE=0xFF9F0A, A_YELLOW=0xFFD60A, A_PINK=0xFF375F, A_INDIGO=0x5E5CE6 };
+static bool is_accent(uint32_t h){ return h==A_ORANGE||h==A_YELLOW||h==A_PINK||h==A_INDIGO; }
 static bool night=false, fade=true;
 // Night: like iPhone StandBy at night -- not red. Low-saturation warm white at ~55 % level; accents keep a hint of hue.
 static lv_color_t col(uint32_t h){ if(!night) return lv_color_hex(h);
+  if(is_accent(h)) return lv_color_make(((h>>16)&255)*52/100,((h>>8)&255)*52/100,(h&255)*52/100); // night: dim to 52 %, keep hue
   if(h==K_BG) return lv_color_hex(0x100D0A); if(h==K_CARD) return lv_color_hex(0x1C1814); if(h==K_CARD2) return lv_color_hex(0x28221C);
   int r=(h>>16)&255,g=(h>>8)&255,b=h&255; int l=(r*77+g*150+b*29)>>8;
   int R=(r*3+l*7)/10, G=(g*3+l*7)/10, B=(b*3+l*7)/10;            // 70 % desaturate
@@ -125,9 +129,9 @@ static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_a
   l.width=3; l.p2.x=cx+((196*lv_trigo_sin(ma))>>15); l.p2.y=cy-((196*lv_trigo_cos(ma))>>15); lv_draw_line(L,&l);
   lv_draw_rect_dsc_t r; lv_draw_rect_dsc_init(&r); r.radius=LV_RADIUS_CIRCLE; r.bg_opa=LV_OPA_COVER; r.bg_color=col(K_TXT);
   lv_area_t h={cx-8,cy-8,cx+8,cy+8}; lv_draw_rect(L,&r,&h);
-  if(f_sa>=0){ lv_draw_line_dsc_t q; lv_draw_line_dsc_init(&q); q.color=col(K_ORG); q.width=2; q.round_start=1; q.round_end=1;
+  if(f_sa>=0){ lv_draw_line_dsc_t q; lv_draw_line_dsc_init(&q); q.color=col(A_ORANGE); q.width=2; q.round_start=1; q.round_end=1;
     sec_pts(f_sa,cx,cy,&q.p1,&q.p2); lv_draw_line(L,&q); }
-  r.bg_color=col(K_ORG); lv_area_t h3={cx-5,cy-5,cx+5,cy+5}; lv_draw_rect(L,&r,&h3);
+  r.bg_color=col(A_ORANGE); lv_area_t h3={cx-5,cy-5,cx+5,cy+5}; lv_draw_rect(L,&r,&h3);
   r.bg_color=col(K_BG); lv_area_t h2={cx-2,cy-2,cx+2,cy+2}; lv_draw_rect(L,&r,&h2); }
 static lv_obj_t* pill(lv_obj_t* p,int w,int h,int x,int y){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); lv_obj_set_size(c,w,h);
   lv_obj_set_style_radius(c,h/2>36?36:h/2,0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_bg_color(c,col(K_CARD),0);
@@ -259,8 +263,9 @@ void gw_cc_open(const gw_cc_t* st,void (*on_tap)(int)){ if(!cc) return; if(st&&d
   if(st->phone_batt>=0){ size_t l=strlen(b); snprintf(b+l,sizeof b-l,"%d%%",st->phone_batt); }
   lv_label_set_text(cc_stat,b);
   bool on[GW_CC_N]={st->bright>0,st->volume>0,st->night,st->dnd};
-  for(int i=0;i<GW_CC_N;i++){ lv_obj_set_style_bg_color(cc_tile[i],col(on[i]&&i>=2?K_ORG:K_CARD2),0);
-    lv_obj_set_style_text_color(cc_ic[i],(on[i]&&i>=2)?lv_color_black():col(i<2?K_ORG:K_TXT),0); lv_obj_set_style_text_color(cc_val[i],(on[i]&&i>=2)?lv_color_black():col(K_TXT),0); }
+  static const uint32_t AC[4]={A_YELLOW,A_PINK,A_ORANGE,A_INDIGO}; // brightness, volume, night (≈Night Shift), DND (Focus)
+  for(int i=0;i<GW_CC_N;i++){ bool f=on[i]&&i>=2; lv_obj_set_style_bg_color(cc_tile[i],col(f?AC[i]:K_CARD2),0);
+    lv_obj_set_style_text_color(cc_ic[i],f?col(K_TXT):col(AC[i]),0); lv_obj_set_style_text_color(cc_val[i],col(K_TXT),0); }
   snprintf(b,sizeof b,"%d%%",st->bright); lv_label_set_text(cc_val[0],b); snprintf(b,sizeof b,"%d%%",st->volume); lv_label_set_text(cc_val[1],b);
   lv_label_set_text(cc_val[2],st->night?"开":"关"); lv_label_set_text(cc_val[3],st->dnd?"开":"关");
   lv_obj_remove_flag(cc,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(cc); }

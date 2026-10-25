@@ -158,6 +158,10 @@ int main(int argc,char**argv){
   perf("listening anim");
   gw_grok_state(2); gif_n=0; for(int i=0;i<45;i++){ step(33); gif_frame("thinking"); }
   perf("thinking anim");
+  { const char* nm[2]={"idle (blink+glance)","speaking"}; int stt[2]={0,3}; for(int m=0;m<2;m++){ gw_grok_state(stt[m]); step(800); frame(); flushed=0;
+      int fr=0; long px=0, mx=0; for(int k=0;k<300;k++){ step(33); frame(); if(flushed){ fr++; px+=flushed; if(flushed>mx) mx=flushed; } flushed=0; }
+      printf("PERF grok %s 10 s @33 ms: redraw frames %d/300, avg dirty %.1f%% of screen per redrawn frame, max %.1f%% (avatar box 220x220 = 22.3%%), est. QSPI %.1f ms per redrawn frame\n",
+        nm[m],fr,fr?100.0*px/fr/(W*W):0,100.0*mx/(W*W),fr?px/fr*2/20e6*1e3:0); } gw_grok_state(0); }
   gw_grok_visible(false); page=1; render(); gif_n=0;
   for(int k=0;k<4;k++){ for(int i=0;i<12;i++){ step(33); gif_frame("pages"); } SWIPE_LEFT(); }
   perf("page swipe");
