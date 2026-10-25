@@ -193,6 +193,9 @@ void gw_grok_state(int st){ if(st<0||st>4) return;
     if(off&&!sub_off){ lv_obj_set_style_opa(g_user,0,0); lv_obj_set_style_opa(g_sub,0,0); } else if(!off&&sub_off){ g_fade(g_user,180); g_fade(g_sub,180); } sub_off=off; }
   if(g_stat&&strcmp(lv_label_get_text(g_stat),HINT[st])){ lv_label_set_text(g_stat,HINT[st]); if(HINT[st][0]) g_fade(g_stat,160); } }
 void gw_grok_level(int l){ g_lvl=l<0?0:(l>100?100:l); }
+// 2.6.12: g_stat holds the *theme* font directly (not the f20_rt copy), so it must be re-pointed when the theme
+// font is swapped, before the old one is freed (same UAF as 2.6.4; suspected cause of the 2.6.11 first-boot abort).
+void gw_grok_font_changed(const lv_font_t* f){ if(g_stat) lv_obj_set_style_text_font(g_stat,f?f:gw_f21(),0); }
 void gw_grok_status(const char* s){ if(g_stat&&s) lv_label_set_text(g_stat,s); }
 static void gx_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
 static void g_fade(lv_obj_t* o,uint32_t ms){ lv_anim_delete(o,gx_opa); lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,o); lv_anim_set_exec_cb(&a,gx_opa);

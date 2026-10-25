@@ -157,35 +157,65 @@ static bool slide_on=true; void gw_faces_set_slide(bool on){ slide_on=on; }
 void gw_faces_dir(int d){ dir=d<0?-1:1; }
 int gw_faces_page_x(void){ return (cur>0&&cur<GW_NPAGES&&pg[cur])?lv_obj_get_x(pg[cur]):0; }
 
-// ---------- 2.6.12 vector turn arrows (Apple Maps-like: one stroke weight, round caps/joins, rounded head) ----------
+// ---------- 2.6.12 vector turn arrows: own SDF rasterizer into a 120x120 A8 mask ----------
+// Path = turtle (forward / true circular-arc turn, so inner+outer stroke edges are concentric), round caps,
+// rounded-tip head (triangle offset by VRR = exact rounded triangle), auto-centred on the ink bbox.
+// Coverage per pixel = 3x3 supersampled SDF (each sample box-filtered), i.e. ~1 px AA edge, identical in sim + device.
 #define VA 120   /* arrow box, px */
 #define VW 18    /* stroke width */
-static float vcx,vcy;
-#define K(v,c) ((c)+((v)-(c))*v_k)
-static void vline(lv_layer_t* L,lv_color_t c,int w,float x1,float y1,float x2,float y2){ x1=K(x1,vcx); x2=K(x2,vcx); y1=K(y1,vcy); y2=K(y2,vcy); w=(int)(w*v_k+.5f); lv_draw_line_dsc_t d; lv_draw_line_dsc_init(&d);
-  d.color=c; d.width=w; d.round_start=1; d.round_end=1; d.p1.x=x1; d.p1.y=y1; d.p2.x=x2; d.p2.y=y2; lv_draw_line(L,&d); }
-static void vhead(lv_layer_t* L,lv_color_t c,float x,float y,float ang){   // head base centred at (x,y), pointing along ang (deg, 0=up, cw)
-  x=K(x,vcx); y=K(y,vcy); float s=sinf(ang*0.0174533f), k=-cosf(ang*0.0174533f), px=-k, py=s; float z=v_k;   // dir=(s,k), perp=(px,py)
-  float tx=x+s*28*z, ty=y+k*28*z, ax=x+px*25*z, ay=y+py*25*z, bx=x-px*25*z, by=y-py*25*z; float sv=v_k; v_k=1;
-  lv_draw_triangle_dsc_t t; lv_draw_triangle_dsc_init(&t); t.color=c; t.opa=LV_OPA_COVER;
-  t.p[0].x=tx; t.p[0].y=ty; t.p[1].x=ax; t.p[1].y=ay; t.p[2].x=bx; t.p[2].y=by; lv_draw_triangle(L,&t);
-  vline(L,c,7,tx,ty,ax,ay); vline(L,c,7,ax,ay,bx,by); vline(L,c,7,bx,by,tx,ty); v_k=sv; }   // 3.5 px round corners on the head
+#define VRR 3.f  /* head corner radius */
+void lv_image_cache_drop(const void* src);   /* lv_image_cache.h is not in lvgl.h */
+typedef struct { uint8_t k; float ax,ay,bx,by,r0,a0,sw; } vprim_t;   // k: 0 seg, 1 arc(center ax,ay radius r0 start a0 sweep sw), 2 tri(a,b,(r0,a0))
+static vprim_t vp[12]; static int vn; static float vtx,vty,vth; static uint8_t* v_vpx; static lv_image_dsc_t v_vdsc; static char v_built[4];
+static float vminx,vminy,vmaxx,vmaxy;
+static void vbb(float x,float y,float pad){ if(x-pad<vminx)vminx=x-pad; if(x+pad>vmaxx)vmaxx=x+pad; if(y-pad<vminy)vminy=y-pad; if(y+pad>vmaxy)vmaxy=y+pad; }
+static void vfwd(float l){ float nx=vtx+sinf(vth)*l, ny=vty-cosf(vth)*l; vp[vn++]=(vprim_t){0,vtx,vty,nx,ny,0,0,0}; vbb(vtx,vty,VW/2.f); vbb(nx,ny,VW/2.f); vtx=nx; vty=ny; }
+static void vturn(float deg,float R){ float s=deg>0?1.f:-1.f, rx=cosf(vth)*s, ry=sinf(vth)*s; float cx=vtx+rx*R, cy=vty+ry*R;   // centre on the turn side
+  float a0=atan2f(vty-cy,vtx-cx), sw=deg*0.0174533f; vp[vn++]=(vprim_t){1,cx,cy,0,0,R,a0,sw};
+  for(int i=0;i<=8;i++){ float a=a0+sw*i/8; vbb(cx+cosf(a)*R,cy+sinf(a)*R,VW/2.f); }
+  vtx=cx+cosf(a0+sw)*R; vty=cy+sinf(a0+sw)*R; vth+=sw; }
+static void vheadp(float len,float hw){ float dx=sinf(vth),dy=-cosf(vth),px=-dy,py=dx; float bx=vtx-dx*2,by=vty-dy*2;   // base overlaps shaft by 2 px
+  float T[3][2]={{bx+dx*len,by+dy*len},{bx+px*hw,by+py*hw},{bx-px*hw,by-py*hw}};
+  float la=hypotf(T[1][0]-T[2][0],T[1][1]-T[2][1]), lb=hypotf(T[0][0]-T[2][0],T[0][1]-T[2][1]), lc=hypotf(T[0][0]-T[1][0],T[0][1]-T[1][1]), P=la+lb+lc;
+  float ix=(la*T[0][0]+lb*T[1][0]+lc*T[2][0])/P, iy=(la*T[0][1]+lb*T[1][1]+lc*T[2][1])/P;
+  float ar=fabsf((T[1][0]-T[0][0])*(T[2][1]-T[0][1])-(T[2][0]-T[0][0])*(T[1][1]-T[0][1]))/2, rho=2*ar/P, f=(rho-VRR)/rho;
+  for(int i=0;i<3;i++){ T[i][0]=ix+(T[i][0]-ix)*f; T[i][1]=iy+(T[i][1]-iy)*f; vbb(T[i][0],T[i][1],VRR); }
+  vp[vn++]=(vprim_t){2,T[0][0],T[0][1],T[1][0],T[1][1],T[2][0],T[2][1],0}; }
+static float vseg(float x,float y,float ax,float ay,float bx,float by){ float vx=bx-ax,vy=by-ay,wx=x-ax,wy=y-ay; float h=(wx*vx+wy*vy)/(vx*vx+vy*vy); h=h<0?0:(h>1?1:h); return hypotf(wx-vx*h,wy-vy*h); }
+static float vprim(const vprim_t* q,float x,float y){
+  if(q->k==0) return vseg(x,y,q->ax,q->ay,q->bx,q->by)-VW/2.f;
+  if(q->k==1){ float a=atan2f(y-q->ay,x-q->ax)-q->a0; float t=q->sw>0?a:-a, S=fabsf(q->sw); while(t<0)t+=6.2831853f; while(t>6.2831853f)t-=6.2831853f;
+    if(t<=S) return fabsf(hypotf(x-q->ax,y-q->ay)-q->r0)-VW/2.f;
+    float e=q->a0+q->sw, d0=hypotf(x-q->ax-cosf(q->a0)*q->r0,y-q->ay-sinf(q->a0)*q->r0), d1=hypotf(x-q->ax-cosf(e)*q->r0,y-q->ay-sinf(e)*q->r0);
+    return (d0<d1?d0:d1)-VW/2.f; }
+  float P[3][2]={{q->ax,q->ay},{q->bx,q->by},{q->r0,q->a0}}; float d=1e9f; int in=1; float sg=0;
+  for(int i=0;i<3;i++){ int j=(i+1)%3; float e=vseg(x,y,P[i][0],P[i][1],P[j][0],P[j][1]); if(e<d)d=e;
+    float c=(P[j][0]-P[i][0])*(y-P[i][1])-(P[j][1]-P[i][1])*(x-P[i][0]); if(i==0) sg=c; else if((c>0)!=(sg>0)) in=0; }
+  return (in?-d:d)-VRR; }
+static void vbuild(const char* t){ vn=0; vtx=0; vty=0; vth=0; vminx=vminy=1e9f; vmaxx=vmaxy=-1e9f; float m=(t[0]=='L'||t[1]=='L')?-1:1;
+  const float HL=30,HW=27;
+  if(!strcmp(t,"S")){ vfwd(62); vheadp(HL,HW); }
+  else if(t[0]=='L'||t[0]=='R'){ vfwd(40); vturn(90*m,22); vfwd(12); vheadp(HL,HW); }
+  else if(t[0]=='S'){ vfwd(40); vturn(45*m,30); vfwd(10); vheadp(HL,HW); }
+  else if(t[0]=='H'){ vfwd(50); vturn(135*m,17); vfwd(22); vheadp(HL-2,HW-2); }   // sharp: tight concentric bend, head back down
+  else if(t[0]=='U'){ vfwd(40); vturn(180*m,21); vfwd(8); vheadp(HL-2,HW-1); }     // UL: up, bend LEFT, head down on the left (CN U-turn)
+  else if(!strcmp(t,"A")){ vp[vn++]=(vprim_t){1,0,0,0,0,30,0,6.2831853f}; vp[vn++]=(vprim_t){0,0,0,0,0,0,0,0}; vbb(0,0,39); }
+  float ox=VA/2.f-(vminx+vmaxx)/2, oy=VA/2.f-(vminy+vmaxy)/2;   // centre the ink bbox
+  if(!v_vpx) v_vpx=lv_malloc(VA*VA); if(!v_vpx) return;
+  for(int py=0;py<VA;py++) for(int px=0;px<VA;px++){ float cov=0;
+    for(int sy=0;sy<3;sy++) for(int sx=0;sx<3;sx++){ float x=px+(sx+.5f)/3-ox, y=py+(sy+.5f)/3-oy, d=1e9f;
+      for(int i=0;i<vn;i++){ float e; if(!strcmp(t,"A")&&i==1) e=hypotf(x,y)-12.5f; else e=vprim(&vp[i],x,y); if(e<d)d=e; }
+      if(!strcmp(t,"A")&&vn==2){ float ring=fabsf(hypotf(x,y)-30)-6; float dot=hypotf(x,y)-12.5f; d=ring<dot?ring:dot; }
+      float c=0.5f-d*3; cov+=c<0?0:(c>1?1:c); }
+    v_vpx[py*VA+px]=(uint8_t)(cov*255/9+.5f); }
+  memset(&v_vdsc,0,sizeof v_vdsc); v_vdsc.header.magic=LV_IMAGE_HEADER_MAGIC; v_vdsc.header.cf=LV_COLOR_FORMAT_A8; v_vdsc.header.w=VA; v_vdsc.header.h=VA; v_vdsc.header.stride=VA;
+  v_vdsc.data=v_vpx; v_vdsc.data_size=VA*VA; lv_image_cache_drop(&v_vdsc); snprintf(v_built,sizeof v_built,"%s",t); }
 static void vdraw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t a; lv_obj_get_coords(v_vec,&a);
-  float cx=a.x1+VA/2, cy=a.y1+VA/2; vcx=cx; vcy=cy; lv_color_t c=col(K_TXT); const char* t=v_turn; float m=(t[0]=='L'||t[1]=='L')?-1:1;
-  #define X(v) (cx+m*(v))
-  if(!strcmp(t,"S")){ vline(L,c,VW,cx,cy+46,cx,cy-14); vhead(L,c,cx,cy-20,0); }
-  else if(!strcmp(t,"L")||!strcmp(t,"R")){ vline(L,c,VW,X(-20),cy+46,X(-20),cy-2); vline(L,c,VW,X(-20),cy-2,X(-4),cy-18); vline(L,c,VW,X(-4),cy-18,X(16),cy-18); vhead(L,c,X(20),cy-18,90*m); }
-  else if(!strcmp(t,"SL")||!strcmp(t,"SR")){ vline(L,c,VW,X(-12),cy+46,X(-12),cy+8); vline(L,c,VW,X(-12),cy+8,X(12),cy-16); vhead(L,c,X(16),cy-20,45*m); }
-  else if(!strcmp(t,"HL")||!strcmp(t,"HR")){ vline(L,c,VW,X(-28),cy+46,X(-28),cy-34); vline(L,c,VW,X(-28),cy-34,X(2),cy-4); vhead(L,c,X(6),cy,135*m); }
-  else if(!strcmp(t,"UL")||!strcmp(t,"UR")){ m=-m; vline(L,c,VW,X(-20),cy+46,X(-20),cy-12);   // U-turn: up, round 180 deg arc, back down
-    lv_draw_arc_dsc_t ar; lv_draw_arc_dsc_init(&ar); ar.color=c; ar.width=VW; ar.rounded=1; ar.width=(int)(VW*v_k+.5f); ar.radius=(int)((20+VW/2)*v_k); ar.center.x=K(X(0),vcx); ar.center.y=K(cy-12,vcy); ar.start_angle=180; ar.end_angle=360; lv_draw_arc(L,&ar);
-    vline(L,c,VW,X(20),cy-12,X(20),cy+8); vhead(L,c,X(20),cy+12,180); }
-  else if(!strcmp(t,"A")){ lv_draw_arc_dsc_t ar; lv_draw_arc_dsc_init(&ar); ar.color=c; ar.width=(int)(12*v_k+.5f); ar.radius=(int)(34*v_k); ar.center.x=cx; ar.center.y=cy; ar.start_angle=0; ar.end_angle=360; lv_draw_arc(L,&ar);
-    lv_draw_rect_dsc_t r; lv_draw_rect_dsc_init(&r); r.radius=LV_RADIUS_CIRCLE; r.bg_color=c; r.bg_opa=LV_OPA_COVER; int rr=(int)(13*v_k); lv_area_t d={cx-rr,cy-rr,cx+rr,cy+rr}; lv_draw_rect(L,&r,&d); }
-  #undef X
-}
+  if(strcmp(v_built,v_turn)) vbuild(v_turn); if(!v_vpx||strcmp(v_built,v_turn)) return;
+  lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d); d.src=&v_vdsc; d.recolor=col(K_TXT); d.recolor_opa=LV_OPA_COVER; d.antialias=1;
+  d.scale_x=d.scale_y=(int32_t)(v_k*256+.5f); d.pivot.x=VA/2; d.pivot.y=VA/2; lv_area_t r={a.x1,a.y1,a.x1+VA-1,a.y1+VA-1}; lv_draw_image(L,&d,&r); }
 static bool vknown(const char* t){ static const char* K[]={"S","L","R","SL","SR","HL","HR","UL","UR","A"}; for(int i=0;i<10;i++) if(t&&!strcmp(t,K[i])) return true; return false; }
-// 1-bit 48x48 -> 96x96 A8: 2x bilinear upsample of a 3x3-softened mask, then drawn with image antialiasing (no stair steps)
+// 1-bit 48x48 -> 96x96 A8: 3x3 soften (rounds stair steps) -> 2x bilinear -> steep re-threshold (narrow AA edge, not blur)
 static void smooth_icon(const uint8_t* ic){ static uint8_t s[48*48];
   for(int y=0;y<48;y++) for(int x=0;x<48;x++){ int acc=0; for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++){ int xx=x+dx, yy=y+dy;
       if(xx<0||yy<0||xx>47||yy>47) continue; int b=(ic[(yy*48+xx)/8]>>(7-((yy*48+xx)%8)))&1; acc+=b*((dx==0&&dy==0)?4:(dx==0||dy==0)?2:1); }
@@ -194,7 +224,7 @@ static void smooth_icon(const uint8_t* ic){ static uint8_t s[48*48];
     #define P(X,Y) ((X)<0||(Y)<0||(X)>47||(Y)>47?0:s[(Y)*48+(X)])
     float v=(1-ax)*(1-ay)*P(x0,y0)+ax*(1-ay)*P(x0+1,y0)+(1-ax)*ay*P(x0,y0+1)+ax*ay*P(x0+1,y0+1);
     #undef P
-    int o=(int)((v-64)*255/127); v_px[y*96+x]=o<0?0:(o>255?255:o); } }   // re-threshold softly: crisp but anti-aliased edge
+    int o=(int)((v-128)*3.5f+128); v_px[y*96+x]=o<0?0:(o>255?255:o); } }   // upscale + threshold: shape from the soft field, AA edge only ~1.2 px
 
 void gw_faces_create(lv_obj_t* parent){
   if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); root=NULL; cur=-1; }

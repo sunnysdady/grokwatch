@@ -103,7 +103,8 @@ static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_
 // builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
 // lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,
 // before the old font is released).
-static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); if(built) lv_obj_report_style_change(nullptr); }
+extern "C" void gw_grok_font_changed(const lv_font_t* f);
+static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); gw_grok_font_changed(f); if(built) lv_obj_report_style_change(nullptr); }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
