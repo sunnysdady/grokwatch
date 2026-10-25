@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 #define GW_SLIDE_W 466
-#define GW_SLIDE_DUR 300          // ms, ease-out
+#define GW_SLIDE_DUR 380          // ms, ease-in-out
 #define GW_SLIDE_PARALLAX 140     // outgoing page drifts this far (px) while the new one covers it
 bool gw_slide_snap_old(void);     // call BEFORE the page changes; false = no buffers, switch directly
 bool gw_slide_start(int dir);     // call AFTER the new page is rendered into the widget tree; +1 = new page from the right

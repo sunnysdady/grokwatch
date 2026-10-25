@@ -48,7 +48,7 @@ static void compose(uint8_t* dst,int y0,int n,int x_new,int x_old){ int nl=x_new
     seg(d,m_old+o,0,nl,x_old); seg(d,m_old+o,nr,W,x_old); } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
 static void run_direct(void){ int64_t t0=hnow(), tf=t0; int fr=0, mx=0, i=0; hw->wait();
-  for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=1.f-(1.f-p)*(1.f-p)*(1.f-p);   // cubic ease-out
+  for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out jumped 126 px in frame 1 and crawled in the last 4 (reads as a pop)
     int v=(int)(q*1000+0.5f), x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
     for(int y=0;y<W;y+=hw->rows,i++){ int n=W-y<hw->rows?W-y:hw->rows; uint8_t* b=hw->buf(i&1);
       compose(b,y,n,x_new,x_old); hw->wait(); hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
