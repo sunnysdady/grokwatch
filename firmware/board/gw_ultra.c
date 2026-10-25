@@ -347,7 +347,7 @@ void gw_faces_create(lv_obj_t* parent){
   v_idle[1]=lv_label_create(v_idle[0]); lv_obj_set_style_text_font(v_idle[1],&gu_icon,0); lv_label_set_text(v_idle[1],I_NAV); lv_obj_center(v_idle[1]);
   v_idle[2]=label(p,F21,K_TXT,0,64); v_idle[3]=label(p,F20,K_SEC,0,102);
   // ---- page dots (top layer: also visible over the native chat page). Transient, like watchOS.
-  dotbar=lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(dotbar); lv_obj_set_size(dotbar,140,12); lv_obj_align(dotbar,LV_ALIGN_CENTER,0,184);
+  dotbar=lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(dotbar); lv_obj_set_size(dotbar,140,12); lv_obj_align(dotbar,LV_ALIGN_CENTER,0,196);   // y 426-432: clear of the "6" (ends 412), nav ETA row (ends 408) and the 6 o'clock tick (starts 439)
   lv_obj_set_flex_flow(dotbar,LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(dotbar,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(dotbar,7,0); lv_obj_remove_flag(dotbar,LV_OBJ_FLAG_CLICKABLE);
   for(int i=0;i<GW_NCORE;i++){ dots[i]=disc(dotbar,7,K_TER); lv_obj_set_style_radius(dots[i],4,0); }
