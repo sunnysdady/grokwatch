@@ -353,12 +353,24 @@ private:
             Application::GetInstance().StopListening();
         });
         // Power key (PMIC): click = standby clock on/off, double = power menu (needs Blue to confirm). Hardware long-press is untouched.
-        pmic_.setSingleResetDisable(true);
-        pmic_.setDoubleOffDisable(true);
+        // 2.6.20: 2.6.19 never saw a red click (no GW-SB "red" line on 10 min of serial). The PMIC button IRQ bits are
+        // masked by default, so IRQ_STATUS3 stays 0 and the poll returned early. Unmask click+double explicitly, log
+        // the results once, and also accept the PMIC "was pressed" flag as a click fallback.
+        { int e1 = pmic_.setSingleResetDisable(true), e2 = pmic_.setDoubleOffDisable(true);
+          int e3 = pmic_.irqSetBtnMask(M5PM1_IRQ_BTN_CLICK, M5PM1_IRQ_MASK_DISABLE);
+          int e4 = pmic_.irqSetBtnMask(M5PM1_IRQ_BTN_DOUBLE, M5PM1_IRQ_MASK_DISABLE);
+          uint8_t st0 = 0; pmic_.irqGetBtnStatus(&st0, M5PM1_CLEAN_ALL); bool f0 = false; pmic_.btnGetFlag(&f0);
+          ESP_LOGW("GW-KEY", "red(PMIC) init: rst_dis=%d off_dis=%d unmask_click=%d unmask_double=%d (0=ok) stale=0x%02x", e1, e2, e3, e4, st0); }
         esp_timer_create_args_t pa = {};
         pa.callback = [](void* arg) {
             auto* b = static_cast<M5StackStopwatchBoard*>(arg); uint8_t st = 0;
-            if (b->pmic_.irqGetBtnStatus(&st, M5PM1_CLEAN_ALL) != M5PM1_OK || !st) return;
+            static int errs = 0; int e = b->pmic_.irqGetBtnStatus(&st, M5PM1_CLEAN_ALL);
+            if (e != M5PM1_OK) { if (errs++ < 3) ESP_LOGW("GW-KEY", "red(PMIC) read err=%d", e); return; }
+            static bool irq_ok = false; bool fl = false;
+            if (st) { irq_ok = true; b->pmic_.btnGetFlag(&fl); }          // consume the press flag of the same press
+            else if (!irq_ok && b->pmic_.btnGetFlag(&fl) == M5PM1_OK && fl) st = M5PM1_IRQ_BTN_CLICK | 0x80;   // IRQ never seen: press flag = click
+            if (!st) return;
+            ESP_LOGW("GW-KEY", "red raw=0x%02x -> %s%s", st, (st & M5PM1_IRQ_BTN_DOUBLE) ? "double" : (st & M5PM1_IRQ_BTN_CLICK) ? "click" : "other", (st & 0x80) ? " (flag)" : "");
             Application::GetInstance().Schedule([b, st]() {
                 (void)b;
                 if (st & M5PM1_IRQ_BTN_DOUBLE) NavUiKey(SB_EV_RED_DOUBLE, []() { NavUiPowerMenu(true); });

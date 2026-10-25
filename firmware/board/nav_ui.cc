@@ -256,8 +256,11 @@ bool NavUiIsStandby(){ return standby; }
 // Keys: the board passes the key event and its normal action; the SM decides (in the UI context) whether the key only
 // wakes the watch or also does its job. ev: SB_EV_RED_CLICK / KEY_YELLOW / KEY_BLUE / RED_DOUBLE / VOICE.
 void NavUiKey(int ev,std::function<void()> normal){ sched([ev,normal](){ if(!built) return;
-  if(ev==SB_EV_RED_CLICK && power_pending){ NavUiPowerMenu(false); return; }
+  if(ev==SB_EV_RED_CLICK && power_pending){ ESP_LOGW("GW-KEY","red click: power menu cancelled"); NavUiPowerMenu(false); return; }
+  const char* kn=ev==SB_EV_RED_CLICK?"red click":ev==SB_EV_KEY_YELLOW?"yellow":ev==SB_EV_KEY_BLUE?"blue":ev==SB_EV_RED_DOUBLE?"red double":"voice";
+  sb_state_t st0=sbm.st;
   int a=sb_ev((sb_event_t)ev,ev==SB_EV_RED_CLICK?"red":ev==SB_EV_KEY_YELLOW?"yellow":ev==SB_EV_KEY_BLUE?"blue":ev==SB_EV_RED_DOUBLE?"red2":"voice");
+  if(ev!=SB_EV_VOICE) ESP_LOGW("GW-KEY","%s: %s -> %s act=0x%x%s",kn,gw_sbsm_state_str(st0),gw_sbsm_state_str(sbm.st),a,a==0?" (ignored: debounce/no-op)":(a&SB_A_PASS)?" +normal":"");
   if((a&SB_A_PASS) && normal) { std::function<void()> f=normal; Application::GetInstance().Schedule(std::move(f)); } }); }   // normal job runs outside the display lock   // 2.6.18: red key toggles the standby clock   // 2.6.17: board wake (backlight + PowerSaveTimer::WakeUp)
 void NavUiSetChatTap(void (*f)()){ chat_tap=f; }
 bool NavUiPowerPending(){ return power_pending; }
