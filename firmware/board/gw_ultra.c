@@ -50,7 +50,7 @@ static lv_color_t col(uint32_t h){ if(!night) return lv_color_hex(h);
 static lv_obj_t *root,*pg[GW_NPAGES],*dotbar,*dots[GW_NCORE],*chat,*sheet,*sheet_t,*sheet_b;
 static int cur=-1, dir=1;
 // face
-static lv_obj_t *r_row,*r_dot,*r_dec;
+static lv_obj_t *r_row,*r_dot,*r_dec; static int r_iw;
 static int f_ss=-1; static float f_sa=-1, s_from, s_span=6.f;  // second hand: last second, drawn angle (deg)
 static lv_obj_t *f_sec,*f_date,*f_time,*f_g[3],*f_gv[3],*f_glink2,*f_hands,*f_pill,*f_km; static int f_hh=-1,f_mm=-1;
 static lv_obj_t *r_card[2],*v_unit,*v_card,*v_row;
@@ -301,7 +301,12 @@ void gw_faces_create(lv_obj_t* parent){
   lv_obj_remove_flag(r_row,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   r_speed=lv_label_create(r_row); lv_obj_set_style_text_font(r_speed,&gn_hero,0); lv_obj_set_style_text_color(r_speed,col(K_TXT),0); lv_obj_set_style_text_letter_space(r_speed,-2,0);
   r_dot=disc(r_row,16,K_TXT); lv_obj_add_flag(r_dot,LV_OBJ_FLAG_HIDDEN);
-  r_dec=lv_label_create(r_row); lv_obj_add_flag(r_dec,LV_OBJ_FLAG_HIDDEN); lv_obj_set_style_text_font(r_dec,&gn_hero,0); lv_obj_set_style_text_color(r_dec,col(K_TXT),0);
+  r_dec=lv_label_create(r_row); lv_obj_set_style_text_font(r_dec,&gn_hero,0); lv_obj_set_style_text_color(r_dec,col(K_TXT),0); lv_obj_set_style_text_letter_space(r_dec,-2,0);
+  // 2.6.23: speed = integer label (right-aligned, fixed 2-digit cell) + ".d" label (left-aligned, fixed cell), same font
+  // so the baseline is shared; the decimal point never moves as digits change (Nunito digits are proportional).
+  { int dw=0; for(char c='0';c<='9';c++){ int w=lv_font_get_glyph_width(&gn_hero,c,0); if(w>dw) dw=w; } int pw=lv_font_get_glyph_width(&gn_hero,'.',0);
+    r_iw=2*dw-2; lv_obj_set_width(r_speed,r_iw); lv_obj_set_style_text_align(r_speed,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_set_width(r_dec,pw+dw-2); lv_obj_set_style_text_align(r_dec,LV_TEXT_ALIGN_LEFT,0); lv_obj_set_style_pad_column(r_row,0,0); }
   r_unit=label(p,&gn_lab,K_SEC,0,29); lv_label_set_text(r_unit,"km/h");
   for(int i=0;i<2;i++){ int x=i?77:-77; r_card[i]=pill(p,146,70,x,102); r_f[i]=label(p,&gn_mid,K_TXT,x,90); r_fl[i]=label(p,F20,K_SEC,x,120); lv_label_set_text(r_fl[i],i?"用时":"里程 km"); }
   r_hint=label(p,F20,K_SEC,0,158); lv_label_set_text(r_hint,"打开 GrokWatch App");
@@ -480,8 +485,9 @@ void gw_faces_show(int page, const gw_state_t* s){
     bool has=s->speed&&s->speed[0]; float v=0; if(has) sscanf(s->speed,"%f",&v);
     if(enter){ a_spd=v; t_spd=v; } else if(v!=t_spd){ anim(&t_spd,ax_spd,(int)(a_spd*10),(int)(v*10),400,0,NULL); t_spd=v; }
     if(prog>=1000) apply_prog();
-    if(has){ int t10=(int)(v*10+0.5f); if(t10<0) t10=0; snprintf(b,sizeof b,"%d.%d",t10/10,t10%10); lv_label_set_text(r_speed,b); lv_obj_set_style_text_color(r_speed,col(K_TXT),0); }
-    else { lv_label_set_text(r_speed,"--"); lv_obj_set_style_text_color(r_speed,col(K_TER),0); }
+    if(has){ int t10=(int)(v*10+0.5f); if(t10<0) t10=0; if(t10>9999) t10=9999; snprintf(b,sizeof b,"%d",t10/10); lv_label_set_text(r_speed,b); snprintf(b,sizeof b,".%d",t10%10); lv_label_set_text(r_dec,b);
+      lv_obj_set_width(r_speed,t10>=1000?LV_SIZE_CONTENT:r_iw);   /* 100+ km/h: grow */ lv_obj_set_style_text_color(r_speed,col(K_TXT),0); lv_obj_set_style_text_color(r_dec,col(K_TXT),0); }
+    else { lv_obj_set_width(r_speed,r_iw); lv_label_set_text(r_speed,"--"); lv_label_set_text(r_dec,""); lv_obj_set_style_text_color(r_speed,col(K_TER),0); }
     snprintf(b,sizeof b,"%d:%02d",s->ride_min/60,s->ride_min%60); lv_label_set_text(r_f[1],b);
     if(s->nav_active&&s->nav_eta&&s->nav_eta[0]){ lv_label_set_text(r_f[0],s->nav_eta); lv_label_set_text(r_fl[0],"到达"); }
     else { snprintf(b,sizeof b,"%.1f",s->ride_km); lv_label_set_text(r_f[0],b); lv_label_set_text(r_fl[0],"里程 km"); }

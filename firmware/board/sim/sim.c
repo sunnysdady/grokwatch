@@ -230,6 +230,7 @@ int main(int argc,char**argv){
   // 8c) night pass over every core page (same model state as the day shots)
   gw_grok_visible(false); night=true; gw_faces_set_night(true); gw_faces_create(lv_screen_active());
   go(1,1); shot("n_face"); speed(23.4f); go(2,1); shot("n_ride");
+  { static const float V[]={1.1f,8.0f,11.1f,24.6f,38.8f,99.9f}; char nm[32]; for(int i=0;i<6;i++){ speed(V[i]); step(600); snprintf(nm,32,"n_ride_%d",(int)(V[i]*10)); shot(nm);} gw_faces_set_night(false); for(int i=0;i<6;i++){ speed(V[i]); step(600); snprintf(nm,32,"d_ride_%d",(int)(V[i]*10)); shot(nm);} }
   nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0); v11_extra("night"); v12_extra("night");
   td_n=3; td_open=2; td_state=1; td_text[0]="买水"; td_text[1]="给车胎打气"; td_text[2]="周日骑行路线"; td_done[0]=false; td_done[1]=false; td_done[2]=true;
   go(GW_PAGE_TODO,1); shot("n_todo"); td_n=0; td_open=0; render(); shot("n_todo_empty");

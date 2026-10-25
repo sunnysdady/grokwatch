@@ -62,7 +62,7 @@ static int one(uint8_t t,const uint8_t* p,int n,int64_t now){
       if(gw_m.ride_start&&v/10.0f>gw_m.ride_max) gw_m.ride_max=v/10.0f;
       if(v>30){ gw_m.last_move=now; if(!gw_m.ride_start) gw_m.ride_start=now; }
       else if(gw_m.ride_start&&now-gw_m.last_move>600000000LL) ev|=summary(now);
-      snprintf(gw_m.speed,sizeof gw_m.speed,"%d",(v+5)/10); ev|=GW_EV_SPEED; } break;
+      snprintf(gw_m.speed,sizeof gw_m.speed,"%d.%d",v/10,v%10);   /* 2.6.23: keep 0.1 km/h (frame is km/h x10) */ ev|=GW_EV_SPEED; } break;
   case 0x50: if(n>=1){ gw_m.usage_pct=p[0]<=100?p[0]:-1; i=1; const char* r=cs(p,n,&i,&l); gw_utf8_copy(gw_m.usage_reset,sizeof gw_m.usage_reset,r,n>1?l:0); ev|=GW_EV_USAGE; } break;   // docs/usage-frame.md
   case 0x30: break;   // legacy NOTIFY frame from old apps: ignored (notifications removed in 2.6.2)
   case 0x40: if(n>=4){ gw_m.time_unix=p[0]|p[1]<<8|p[2]<<16|(uint32_t)p[3]<<24; gw_m.tz_min=n>=6?(int16_t)(p[4]|p[5]<<8):480; ev|=GW_EV_TIME; } break;
