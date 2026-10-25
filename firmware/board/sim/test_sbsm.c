@@ -36,7 +36,8 @@ int main(void){ int a;
   reset(1); CHK("awake nav frame: no action",ev(SB_EV_NAV_TURN)==0);
   // ---- debounce / interruption ----
   reset(1); advance(300); ev(SB_EV_RED_CLICK); advance(100); a=ev(SB_EV_RED_CLICK); CHK("red x2 within 250ms ignored",a==0&&m.st==SB_ENTERING);
-  advance(200); a=ev(SB_EV_RED_CLICK); CHK("red during enter fade (>250ms) reverses to wake",m.st==SB_WAKING&&(a&SB_A_HIDE));
+  advance(200); a=ev(SB_EV_RED_CLICK); CHK("red during enter fade: keeps entering (no accidental wake)",m.st==SB_ENTERING&&a==0);
+  reset(1); for(int i=0;i<20;i++){T+=1000; ev(SB_EV_TICK);} advance(270); a=ev(SB_EV_RED_CLICK); CHK("red 270ms after idle-enter starts: stays going to standby",m.st==SB_ENTERING&&a==0);
   reset(1); idle_to_standby(); ev(SB_EV_TOUCH); a=ev(SB_EV_TOUCH); CHK("second touch during wake fade: no re-enter",m.st==SB_WAKING&&!(a&SB_A_SHOW));
   reset(1); idle_to_standby(); a=ev(SB_EV_TICK); CHK("standby tick: no action",a==0&&m.st==SB_STANDBY);
   reset(1); idle_to_standby(); ev(SB_EV_TOUCH); for(int i=0;i<5;i++){T+=1000; ev(SB_EV_TICK);} CHK("after wake: idle timer fresh",m.st!=SB_ENTERING);

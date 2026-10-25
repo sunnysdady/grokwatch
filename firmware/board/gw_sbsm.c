@@ -17,6 +17,7 @@ int gw_sbsm_event(gw_sbsm_t* m,sb_event_t ev,const sb_ctx_t* c,int64_t now){
   case SB_EV_ACTIVITY: if(awake(m)) m->last_input_ms=now; return 0;
   case SB_EV_RED_CLICK: if(db) return 0;
     if(awake(m)) return enter(m,c,now)|SB_A_HAPTIC;
+    if(m->st==SB_ENTERING) return 0;   // 2.6.22: pressing red to sleep while the idle fade already runs must not wake it
     return wake(m,now,SB_A_GOTO_PREV);
   case SB_EV_TOUCH: if(awake(m)){ m->last_input_ms=now; return SB_A_PASS; }
     return wake(m,now,SB_A_SWALLOW|SB_A_GOTO_PREV);          // the waking touch is eaten, no swipe/tap reaches the page
