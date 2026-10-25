@@ -77,20 +77,9 @@ public:
                     bool swap_xy)
         : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {}
 
-    bool SetEmotion(const char* emotion) override {
-        bool r = SpiLcdDisplay::SetEmotion(emotion);
-        DisplayLockGuard lock(this);
-        if (emoji_image_ && !lv_obj_has_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN)) {
-            lv_image_header_t h; const void* src = lv_image_get_src(emoji_image_);
-            // RC6.1: scale the whole emoji into a 150px box (RC5b scaled the pixels but not the box -> cropped yellow square)
-            if (src && lv_image_decoder_get_info(src, &h) == LV_RESULT_OK && h.w > 0 && h.w < 150) {
-                lv_image_set_scale(emoji_image_, LV_SCALE_NONE);
-                lv_obj_set_size(emoji_image_, 150, 150); lv_image_set_inner_align(emoji_image_, LV_IMAGE_ALIGN_STRETCH);
-                if (emoji_box_) lv_obj_set_size(emoji_box_, 170, 170);
-            }
-        }
-        return r;
-    }
+    // GrokWatch: the stock emoji box is hidden for good (gw_grok owns the chat page), so never decode emoji images
+    // (this was the boot-time "Emoji not found: robot_2" lookup).
+    bool SetEmotion(const char* emotion) override { (void)emotion; return true; }
     // GrokWatch: the chat page is gw_grok (mint character). Map xiaozhi device states onto its five states.
     void SetStatus(const char* status) override {
         SpiLcdDisplay::SetStatus(status);

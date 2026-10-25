@@ -103,8 +103,11 @@ static void sec_pts(float deg,int cx,int cy,lv_point_precise_t* tip,lv_point_pre
 // Invalidate only the second hand's own bounding box (old + new pose), never the whole face.
 static void sec_inval(float deg){ if(deg<0||!f_hands) return; lv_area_t c; lv_obj_get_coords(f_hands,&c); lv_point_precise_t a,b;
   sec_pts(deg,(c.x1+c.x2)/2,(c.y1+c.y2)/2,&a,&b);
-  lv_area_t r={(int32_t)LV_MIN(a.x,b.x)-4,(int32_t)LV_MIN(a.y,b.y)-4,(int32_t)LV_MAX(a.x,b.x)+4,(int32_t)LV_MAX(a.y,b.y)+4};
-  lv_obj_invalidate_area(f_hands,&r); }
+  enum { SEG=8 };  // 8 small boxes along the hand: a diagonal costs ~1/5 of its bounding box
+  for(int k=0;k<SEG;k++){ float t0=(float)k/SEG, t1=(float)(k+1)/SEG;
+    int x0=b.x+(a.x-b.x)*t0, y0=b.y+(a.y-b.y)*t0, x1=b.x+(a.x-b.x)*t1, y1=b.y+(a.y-b.y)*t1;
+    lv_area_t r={LV_MIN(x0,x1)-3,LV_MIN(y0,y1)-3,LV_MAX(x0,x1)+3,LV_MAX(y0,y1)+3}; lv_obj_invalidate_area(f_hands,&r); }
+  lv_area_t hub={(c.x1+c.x2)/2-6,(c.y1+c.y2)/2-6,(c.x1+c.x2)/2+6,(c.y1+c.y2)/2+6}; lv_obj_invalidate_area(f_hands,&hub); }
 static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*0.006f; sec_inval(f_sa); }
 #define V_USCALE 144  /* 144/256 = 0.56 = mockup 54/96 */
 static void nav_layout(void){ lv_obj_update_layout(v_dist); lv_obj_update_layout(v_unit);
@@ -180,7 +183,7 @@ void gw_faces_create(lv_obj_t* parent){
   // ---- TODO: voice to-do list (Ultra style). Up to 5 rows, tap = check off.
   p=pg[GW_PAGE_TODO];
   t_head=label(p,F20,K_SEC,0,-150);
-  for(int i=0;i<GW_TODO_ROWS;i++){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); t_row[i]=c; lv_obj_set_size(c,i==0||i==4?296:336,48);
+  for(int i=0;i<GW_TODO_ROWS;i++){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); t_row[i]=c; lv_obj_set_size(c,320,48);
     lv_obj_align(c,LV_ALIGN_CENTER,0,-112+i*54); lv_obj_set_style_bg_color(c,col(K_CARD),0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_radius(c,25,0);
     lv_obj_add_flag(c,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_GESTURE_BUBBLE); lv_obj_remove_flag(c,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(c,todo_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
@@ -188,9 +191,9 @@ void gw_faces_create(lv_obj_t* parent){
     t_txt[i]=lv_label_create(c); lv_obj_set_style_text_font(t_txt[i],F20,0); lv_obj_set_style_text_color(t_txt[i],col(K_TXT),0);
     lv_obj_set_width(t_txt[i],lv_obj_get_style_width(c,0)-66); lv_label_set_long_mode(t_txt[i],LV_LABEL_LONG_DOT); lv_obj_set_height(t_txt[i],28); lv_obj_align(t_txt[i],LV_ALIGN_LEFT_MID,52,1); }
   t_more=label(p,F20,K_SEC,0,150);
-  t_empty[0]=disc(p,112,K_CARD); lv_obj_align(t_empty[0],LV_ALIGN_CENTER,0,-40);
+  t_empty[0]=disc(p,112,K_CARD); lv_obj_align(t_empty[0],LV_ALIGN_CENTER,0,-22);
   t_empty[1]=lv_label_create(t_empty[0]); lv_obj_set_style_text_font(t_empty[1],&gu_icon,0); lv_obj_set_style_text_color(t_empty[1],col(K_ORG),0); lv_label_set_text(t_empty[1],I_MIC); lv_obj_center(t_empty[1]);
-  t_empty[2]=label(p,F20,K_SEC,0,62); lv_obj_set_width(t_empty[2],300); lv_obj_set_style_text_align(t_empty[2],LV_TEXT_ALIGN_CENTER,0);
+  t_empty[2]=label(p,F20,K_SEC,0,80); lv_obj_set_width(t_empty[2],300); lv_obj_set_style_text_align(t_empty[2],LV_TEXT_ALIGN_CENTER,0);
   // ---- NAV: big turn arrow
   p=pg[GW_PAGE_NAV];
   v_has=false;  // new image object: force the cached arrow to be re-applied (night toggle recreates pages mid-nav)
@@ -231,7 +234,7 @@ void gw_faces_create(lv_obj_t* parent){
   lv_obj_add_event_cb(cc,cc_bg_click,LV_EVENT_CLICKED,NULL);
   cc_stat=label(cc,F20,K_SEC,0,-158);
   static const char* IC[GW_CC_N]={I_SUN,I_VOL,I_MOON,I_DND}; static const char* LB[GW_CC_N]={"亮度","音量","夜间","勿扰"};
-  for(int i=0;i<GW_CC_N;i++){ int x=(i%2)?60:-60, y=(i/2)?62:-70;
+  for(int i=0;i<GW_CC_N;i++){ int x=(i%2)?60:-60, y=(i/2)?72:-60;
     cc_tile[i]=disc(cc,92,K_CARD2); lv_obj_align(cc_tile[i],LV_ALIGN_CENTER,x,y); lv_obj_add_flag(cc_tile[i],LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(cc_tile[i],cc_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
     cc_ic[i]=lv_label_create(cc_tile[i]); lv_obj_set_style_text_font(cc_ic[i],&gu_sm,0); lv_label_set_text(cc_ic[i],IC[i]); lv_obj_align(cc_ic[i],LV_ALIGN_CENTER,0,-10);
@@ -332,6 +335,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     bool any=s->n_todo>0;
     if(s->todo_state==3&&!any) snprintf(b,sizeof b,"待办 · 未启用"); else if(s->todo_state==2&&!any) snprintf(b,sizeof b,"待办 · 离线"); else if(s->todo_state==1&&!any) snprintf(b,sizeof b,"待办 · 同步中"); else if(s->todo_open) snprintf(b,sizeof b,"待办 · %d",s->todo_open); else snprintf(b,sizeof b,"待办");
     lv_label_set_text(t_head,b);
+    { int n=s->n_todo>GW_TODO_ROWS?GW_TODO_ROWS:s->n_todo; for(int i=0;i<n;i++) lv_obj_align(t_row[i],LV_ALIGN_CENTER,0,4+i*54-(n-1)*27); }
     for(int i=0;i<GW_TODO_ROWS;i++){ if(i<s->n_todo){ bool d=s->todo_done[i];
         lv_label_set_text(t_txt[i],s->todo_text[i]?s->todo_text[i]:""); lv_obj_set_style_text_color(t_txt[i],col(d?K_SEC:K_TXT),0);
         lv_obj_set_style_text_decor(t_txt[i],d?LV_TEXT_DECOR_STRIKETHROUGH:LV_TEXT_DECOR_NONE,0);

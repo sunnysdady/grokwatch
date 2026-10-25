@@ -145,11 +145,11 @@ static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_
   lv_obj_invalidate(g_avatar); // Only the avatar's 220x220 area, never the screen.
   if(g_st==1) for(int i=0;i<7;i++){
     int h=5+(int)((1+wave(g_now+i*67,400))*g_lvl*(4-abs(i-3))/40);
-    if(h>24) h=24; lv_obj_set_height(g_bar[i],h); lv_obj_align(g_bar[i],LV_ALIGN_CENTER,(i-3)*14,90);
+    if(h>24) h=24; lv_obj_set_height(g_bar[i],h); lv_obj_align(g_bar[i],LV_ALIGN_CENTER,(i-3)*14,98);
   }
   if(g_st==2) for(int i=0;i<3;i++){
     int a=(g_now/12+i*35)%360;
-    lv_obj_align(g_dot[i],LV_ALIGN_CENTER,(96*lv_trigo_cos(a))>>15,-94+((14*lv_trigo_sin(a))>>15));
+    lv_obj_align(g_dot[i],LV_ALIGN_CENTER,(96*lv_trigo_cos(a))>>15,-86+((14*lv_trigo_sin(a))>>15));
   }
 }
 void gw_grok_create(lv_obj_t* parent){
@@ -165,7 +165,7 @@ void gw_grok_create(lv_obj_t* parent){
       g_mask_img.header.w=AV; g_mask_img.header.stride=AV; }
   }
   g_avatar=lv_obj_create(g_root); lv_obj_remove_style_all(g_avatar); lv_obj_set_size(g_avatar,220,220);
-  lv_obj_align(g_avatar,LV_ALIGN_CENTER,0,-30); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_align(g_avatar,LV_ALIGN_CENTER,0,-22); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(g_avatar,draw_avatar,LV_EVENT_DRAW_MAIN,NULL);
   for(int i=0;i<7;i++){ g_bar[i]=rect(g_root,7,5,4,SKIN[0].accent); lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN); }
   for(int i=0;i<3;i++){ g_dot[i]=rect(g_root,7,7,4,i==0?0x9A72EE:(i==1?0x5B95F0:0x35C3BD)); lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN); }
