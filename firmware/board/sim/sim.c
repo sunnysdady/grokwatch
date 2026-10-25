@@ -129,10 +129,10 @@ static void after24(void){ (void)sl_y; char nm[64]; gw_faces_set_slide(false); s
   for(int n=0;n<2;n++){ const char* D=n?"night":"day"; night=n; gw_faces_set_night(n); gw_faces_create(lv_screen_active()); gw_grok_set_night(n);
     gw_grok_variant(2); page=1; render(); step(400);
     snprintf(nm,sizeof nm,"a24_%s_face",D); shot(nm);
-    for(int sty=0;sty<=1;sty++){ gw_slide_set_style(sty);
+    for(int sty=0;sty<=2;sty++){ gw_slide_set_style(sty);
       snprintf(nm,sizeof nm,"a24slide_%s_style%d_face_ride",D,sty); slide_gif(nm,2,1);
       snprintf(nm,sizeof nm,"a24slide_%s_style%d_ride_face",D,sty); slide_gif(nm,1,-1); }
-    gw_slide_set_style(0);
+    gw_slide_set_style(2);
     snprintf(nm,sizeof nm,"a24slide_%s_face_grok",D); slide_gif(nm,0,-1);
     static const char* SN[]={"idle","listening","thinking","speaking","offline"};
     for(int st=0;st<5;st++){ gw_grok_state(st); gw_grok_level(70); gw_grok_text("assistant","这段字幕不应出现"); step(st==1?400:300);

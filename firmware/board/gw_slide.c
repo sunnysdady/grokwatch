@@ -30,7 +30,7 @@ static void ax(void* var,int32_t v){ (void)var; if(!ov) return;   // v: 0..1000 
   int x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
   lv_obj_set_x(im_new,x_new); lv_obj_set_x(im_old,x_old); }
 static void anim_done(lv_anim_t* a){ (void)a; finish(); }
-static int s_style=0;   // 0 = legacy compose (disc cards, default: it fits the bus, ~34 fps on device), 1 = cover (56 ms/frame on device, 23 fps)
+static int s_style=2;   // 0 = legacy compose (two disc "coins"), 1 = cover (56 ms/frame on device), 2 = push under a fixed rim (default)
 static int64_t pre_us;   // when the old page was snapped at touch-down (0 = none)
 bool gw_slide_snap_old(void){ if(ov) finish(); int64_t n=us();
   if(have_old&&pre_us&&n-pre_us<1500000){ pre_us=0; snap_us[0]=0; return true; }   // snapped at touch-down: the swipe pays nothing
@@ -69,12 +69,30 @@ static void compose_style(uint8_t* dst,int y0,int n,float q){
     seg(d,m_old+o,0,nl,xo); seg(d,m_old+o,nr,W,xo);
     if(nr>nl){ memcpy(d+nl*2,m_new+o+(size_t)(nl-xn)*2,(size_t)(nr-nl)*2);
       uint16_t* p=(uint16_t*)d; for(int k=0;k<SHADOW;k++){ int x=s_dir>0?nl-1-k:nr+k; if(x<0||x>=W) break; p[x]=dim(p[x],32-(SHADOW-k)*14/SHADOW); } } } }
+// ---- push transition (style 2): one shared background, both pages' discs ride on it 1:1, so there are no black
+// crescents or hard seams between two "coins". Each page is clipped to its own disc; the gap between them is the bg.
+static uint16_t s_bg;
+static uint16_t pick_bg(void){ const uint16_t* n=(const uint16_t*)m_new; uint16_t c[32]; int best=0,bc=0;   // the page's own fill: majority colour on a ring well inside the rim
+  for(int i=0;i<32;i++){ float a=i*0.19635f; c[i]=n[(int)(W/2+196*sinf(a))*W+(int)(W/2+196*cosf(a))]; }
+  for(int i=0;i<32;i++){ int k=0; for(int j=0;j<32;j++) k+=c[j]==c[i]; if(k>bc){ bc=k; best=i; } } return c[best]; }
+#define PUSH_R 214   // source disc radius: inside each page's own darker rim, so no ring travels with the page
+static int16_t s_in[W];   // source chord start per row (W/2 = row outside the source disc)
+// copy source chord [sl,sh] shifted by xs, clipped to the screen chord [lo,hi]
+static void span(uint8_t* d,const uint8_t* src,int xs,int sl,int sh,int lo,int hi){ if(sh<sl) return; int a=xs+sl, b=xs+sh+1; if(a<lo) a=lo; if(b>hi+1) b=hi+1; if(b>a) memcpy(d+a*2,src+(size_t)(a-xs)*2,(size_t)(b-a)*2); }
+static void compose_push(uint8_t* dst,int y0,int n,float q){ compose_style(dst,y0,0,q);   // fills s_lo
+  if(q>=1.f){ compose(dst,y0,n,0,0); return; }   // last frame: exactly the real page, so the landing redraw can be skipped
+  if(!s_in[0]) for(int y=0;y<W;y++){ float dy=y+0.5f-W/2.0f, h2=(float)PUSH_R*PUSH_R-dy*dy; s_in[y]=(int16_t)(h2>0?W/2-(int)sqrtf(h2):W/2); }
+  int xn=s_dir*(int)(W*(1.f-q)+0.5f), xo=xn-s_dir*W;
+  for(int r=0;r<n;r++){ int y=y0+r, lo=s_lo[y], hi=W-1-lo, sl=s_in[y], sh=W-1-sl; uint16_t* d=(uint16_t*)(dst+(size_t)r*W*2); size_t o=(size_t)y*W*2;
+    const uint16_t* rim=(const uint16_t*)(m_new+o); int il=sl>lo?sl:lo, ih=sh<hi?sh:hi;   // the rim stays put (new page's), content slides under it
+    for(int x=0;x<W;x++) d[x]=(x<lo||x>hi)?0:(x<il||x>ih)?rim[x]:s_bg;
+    span((uint8_t*)d,m_old+o,xo,sl,sh,il,ih); span((uint8_t*)d,m_new+o,xn,sl,sh,il,ih); } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
-static void run_direct(void){ int64_t t0=hnow(), tf=t0, tc=0, tw=0; int fr=0, mx=0, i=0; hw->wait();
+static void run_direct(void){ if(s_style==2) s_bg=pick_bg(); int64_t t0=hnow(), tf=t0, tc=0, tw=0; int fr=0, mx=0, i=0; hw->wait();
   for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out jumped 126 px in frame 1 and crawled in the last 4 (reads as a pop)
     int v=(int)(q*1000+0.5f), x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
     for(int y=0;y<W;y+=hw->rows,i++){ int n=W-y<hw->rows?W-y:hw->rows; uint8_t* b=hw->buf(i&1);
-      int64_t a=hnow(); if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old); int64_t c=hnow(); hw->wait(); tc+=c-a; tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
+      int64_t a=hnow(); if(s_style==2) compose_push(b,y,n,q); else if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old); int64_t c=hnow(); hw->wait(); tc+=c-a; tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
     if(hw->frame_done) hw->frame_done();
     int64_t t=hnow(); int fm=(int)(t-tf); if(fm>mx) mx=fm; tf=t; fr++;
     if(last) break; }
@@ -84,7 +102,7 @@ bool gw_slide_start(int dir){ if(!have_old) return false; have_old=false; s_dir=
   if(hw){ run_direct();
     // the last pushed frame already is the new page: drop the full-screen redraw render() queued (90-200 ms on device)
     // and repaint only the top layer (page dots), which the screen snapshot leaves out
-    if(!s_style){ lv_display_t* d=lv_display_get_default(); d->inv_p=0; lv_obj_t* top=lv_layer_top();   // cover leaves old-page pixels outside the card
+    if(s_style!=1){ lv_display_t* d=lv_display_get_default(); d->inv_p=0; lv_obj_t* top=lv_layer_top();   // cover leaves old-page pixels outside the card
       for(uint32_t i=0;i<lv_obj_get_child_count(top);i++){ lv_obj_invalidate(lv_obj_get_child(top,i)); } }
     if(done_cb) done_cb();
     return true; }
