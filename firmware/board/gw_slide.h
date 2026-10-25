@@ -24,6 +24,7 @@ typedef struct {
 } gw_slide_hw_t;
 void gw_slide_set_hw(const gw_slide_hw_t* hw);
 void gw_slide_last_stats(int* frames,int* ms,int* max_frame_us);   // direct mode: last slide
+void gw_slide_set_style(int s);   // 0 legacy, 1 cover, 2 fixed ring, 3 slide+crossfade (sim comparison)
 void gw_slide_cancel(void);       // jump to the end (real page shows)
 void gw_slide_set_done_cb(void (*cb)(void));
 int  gw_slide_last_snap_us(int which);   // 0 old, 1 new: time to render the snapshot
