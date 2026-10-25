@@ -121,7 +121,8 @@ static int64_t sh_now(void){ return sl_t; }
 static void sh_frame(void){ gf_px+=(long)W*W; gf_cnt++; char p[256]; snprintf(p,sizeof p,"%s/gif_%s_%03d.ppm",OUT,sl_tag,gif_n++); save_ppm(p); sl_t+=16667; }
 static const gw_slide_hw_t sim_hw={16,sh_buf,sh_push,sh_wait,sh_now,sh_frame};
 static void slide_gif(const char* tag,int to,int dd){ sl_tag=tag; sl_t=0; gw_slide_set_hw(&sim_hw); gif_n=0; gf_px=gf_cnt=refr_n=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
-  go(to,dd); double sm=snap_ms; int fr=0; while(gw_slide_active()&&fr<40){ step(30); gif_frame(tag); fr++; } step(30); gif_frame(tag);
+  go(to,dd); double sm=snap_ms; flushed=0; frame(); { static uint16_t ref[W*W]; memcpy(ref,fb,sizeof fb); lv_obj_invalidate(lv_screen_active()); frame(); int bad=0; for(int i=0;i<W*W;i++) bad+=fb[i]!=ref[i];   // landing without a full redraw must equal one
+    printf("SLIDE %s landing px=%ld (full=%d) diff_vs_full_redraw=%d\n",tag,flushed-(long)W*W,W*W,bad); missing_total+=bad>0; } flushed=0; int fr=0; while(gw_slide_active()&&fr<40){ step(30); gif_frame(tag); fr++; } step(30); gif_frame(tag);
   char nm[64]; snprintf(nm,sizeof nm,"slide %s (snapshot both + build %.1f ms host)",tag,sm); perf(nm);
   printf("SLIDE %s frames=%d slide_active_after=%d page_x=%d\n",tag,fr,gw_slide_active(),gw_faces_page_x()); }
 static void after24(void){ (void)sl_y; char nm[64]; gw_faces_set_slide(false); sim_slide=1;
@@ -131,7 +132,7 @@ static void after24(void){ (void)sl_y; char nm[64]; gw_faces_set_slide(false); s
     for(int sty=0;sty<=1;sty++){ gw_slide_set_style(sty);
       snprintf(nm,sizeof nm,"a24slide_%s_style%d_face_ride",D,sty); slide_gif(nm,2,1);
       snprintf(nm,sizeof nm,"a24slide_%s_style%d_ride_face",D,sty); slide_gif(nm,1,-1); }
-    gw_slide_set_style(1);
+    gw_slide_set_style(0);
     snprintf(nm,sizeof nm,"a24slide_%s_face_grok",D); slide_gif(nm,0,-1);
     static const char* SN[]={"idle","listening","thinking","speaking","offline"};
     for(int st=0;st<5;st++){ gw_grok_state(st); gw_grok_level(70); gw_grok_text("assistant","这段字幕不应出现"); step(st==1?400:300);

@@ -1,6 +1,7 @@
 #include "gw_slide.h"
 #include "gw_mem.h"
 #include <string.h>
+#include "src/display/lv_display_private.h"   // inv_p
 #ifdef ESP_PLATFORM
 #include "esp_timer.h"
 static int64_t us(void){ return esp_timer_get_time(); }
@@ -29,6 +30,7 @@ static void ax(void* var,int32_t v){ (void)var; if(!ov) return;   // v: 0..1000 
   int x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
   lv_obj_set_x(im_new,x_new); lv_obj_set_x(im_old,x_old); }
 static void anim_done(lv_anim_t* a){ (void)a; finish(); }
+static int s_style=0;   // 0 = legacy compose (disc cards, default: it fits the bus, ~34 fps on device), 1 = cover (56 ms/frame on device, 23 fps)
 static int64_t pre_us;   // when the old page was snapped at touch-down (0 = none)
 bool gw_slide_snap_old(void){ if(ov) finish(); int64_t n=us();
   if(have_old&&pre_us&&n-pre_us<1500000){ pre_us=0; snap_us[0]=0; return true; }   // snapped at touch-down: the swipe pays nothing
@@ -55,7 +57,6 @@ static void compose(uint8_t* dst,int y0,int n,int x_new,int x_old){ int nl=x_new
 // ---- cover transition: the new page is its own round card that slides over the old page (which parallaxes). Only the
 // card's chord is composed (memcpy spans, no per-pixel clamp), with a short edge shadow on the old page.
 #include <math.h>
-static int s_style=1;   // 0 = legacy compose (disc cards), 1 = cover
 void gw_slide_set_style(int s){ s_style=s; }
 static uint16_t dim(uint16_t c,int a){ return (uint16_t)((((c>>11)&31)*a>>5)<<11 | (((c>>5)&63)*a>>5)<<5 | ((c&31)*a>>5)); }
 #define SHADOW 10   // px of soft shade the new page casts on the old one
@@ -80,7 +81,13 @@ static void run_direct(void){ int64_t t0=hnow(), tf=t0, tc=0, tw=0; int fr=0, mx
   hw->wait(); st_comp_ms=(int)(tc/1000); st_wait_ms=(int)(tw/1000); st_frames=fr; st_ms=(int)((hnow()-t0)/1000); st_max_us=mx; }
 bool gw_slide_start(int dir){ if(!have_old) return false; have_old=false; s_dir=dir<0?-1:1;
   if(!snap(&sb_new,m_new,&snap_us[1])) return false;
-  if(hw){ run_direct(); if(done_cb) done_cb(); return true; }
+  if(hw){ run_direct();
+    // the last pushed frame already is the new page: drop the full-screen redraw render() queued (90-200 ms on device)
+    // and repaint only the top layer (page dots), which the screen snapshot leaves out
+    if(!s_style){ lv_display_t* d=lv_display_get_default(); d->inv_p=0; lv_obj_t* top=lv_layer_top();   // cover leaves old-page pixels outside the card
+      for(uint32_t i=0;i<lv_obj_get_child_count(top);i++){ lv_obj_invalidate(lv_obj_get_child(top,i)); } }
+    if(done_cb) done_cb();
+    return true; }
   ov=lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(ov); lv_obj_set_size(ov,W,W); lv_obj_set_pos(ov,0,0);
   lv_obj_set_style_bg_color(ov,lv_color_black(),0); lv_obj_set_style_bg_opa(ov,LV_OPA_COVER,0);   // opaque: nothing under it is redrawn
   lv_obj_remove_flag(ov,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
