@@ -36,7 +36,7 @@ static void buzz(int ms){ if(haptic && !dnd) haptic(ms); }
 static void buzz2(){ if(!haptic || dnd) return; haptic(70); lv_timer_create([](lv_timer_t* t){ if(haptic) haptic(70); lv_timer_delete(t); },180,nullptr); }
 static int64_t page_us=0, wake_us=0; static uint32_t fr_total=0;
 static bool touch_log=false; static lv_indev_t* touch_indev=nullptr; static int64_t down_us=0; static lv_point_t down_pt={0,0};
-static void slide_begin_stats(); static void slide_abort_stats();   // 2.6.24 (frame split below)
+static void slide_begin_stats(); static void slide_abort_stats(); static bool drag_used=false;   // 2.6.32 drag slide owns this touch   // 2.6.24 (frame split below)
 // 2.6.24: snapshot slide. Old screen -> PSRAM bitmap, new page rendered -> second bitmap, then only the two bitmaps move.
 // Replaces the fps governor that switched pages without any motion after two slow slides.
 static void go(int p,int d){ bool sl=built && gw_slide_snap_old(); page=(p%NPAGES+NPAGES)%NPAGES; page_us=now_us(); gw_faces_dir(d); if(haptic) haptic(18);
@@ -155,6 +155,7 @@ static int sb_ev(sb_event_t ev,const char* why){ if(!sbm_init){ gw_sbsm_init(&sb
 static void tick_cb(lv_timer_t*){ gw_health_ui_beat(); standby_tick(); sb_ev(SB_EV_TICK,"idle"); bool b=linked(); int ev=gw_model_tick(now_us()); if(ev&GW_EV_NAV_END) ESP_LOGW(TAG,"nav stale 20s -> idle");
   if(page<=2 || b!=last_ble || page==GW_PAGE_NAV || ev) render(); last_ble=b; }
 static void gesture_cb(lv_event_t*){
+  if(drag_used) return;   // this touch is a finger-following slide
   lv_dir_t d=lv_indev_get_gesture_dir(lv_indev_active()); last_gesture=now_us();
   if(touch_log) ESP_LOGW(TAG,"touch gesture dir=%s page=%d -> %s",d==LV_DIR_LEFT?"L":d==LV_DIR_RIGHT?"R":d==LV_DIR_TOP?"U":d==LV_DIR_BOTTOM?"D":"?",page,
     gw_cc_is_open()?"close_cc":gw_faces_sheet_open()?"close_sheet":(d==LV_DIR_LEFT||d==LV_DIR_RIGHT)?"page":d==LV_DIR_TOP?"open_cc":"none");
@@ -177,9 +178,28 @@ static void click_cb(lv_event_t* e){
   if(page==0) chat_try(false);  // logged + rejected as "short"
 }
 static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_active()) return; if(page==0) chat_try(true); }
+// 2.6.32 finger-following page slide: the first clearly horizontal move switches to the neighbour page and hands the
+// drag to gw_slide; release settles it with the finger's speed (or back to the old page). LVGL's own swipe gesture is
+// ignored for that touch.
+static int drag_from=-1, drag_dir=0; static int64_t dv_t[6]; static int dv_x[6], dv_n=0;
+static void drag_move(lv_point_t p){ int dx=p.x-down_pt.x, dy=p.y-down_pt.y; int64_t t=now_us(); dv_t[dv_n%6]=t; dv_x[dv_n%6]=p.x; dv_n++;
+  if(gw_slide_dragging()){ gw_slide_drag_to(dx); return; }
+  if(drag_used||standby||!built||gw_cc_is_open()||gw_faces_sheet_open()) return;
+  if(abs(dx)<14||abs(dx)<2*abs(dy)) return;
+  drag_used=true; if(!gw_slide_can_drag()) { drag_used=false; return; }   // no snapshot: LVGL's swipe gesture handles it
+  drag_dir=dx<0?1:-1; drag_from=page; last_gesture=t; page=((page+drag_dir)%NPAGES+NPAGES)%NPAGES; page_us=t; gw_faces_dir(drag_dir);
+  if(page==GW_PAGE_TODO) GwTodoFetch(); render(); slide_begin_stats();
+  if(gw_slide_drag_begin(drag_dir)) gw_slide_drag_to(dx); else slide_abort_stats(); }
+static void drag_release(){ if(!gw_slide_dragging()) return; int64_t t=now_us(); float vx=0;
+  for(int k=1;k<6&&k<dv_n;k++){ int j=(dv_n-1-k)%6, l=(dv_n-1)%6; if(t-dv_t[j]>=40000||k==5||k==dv_n-1){ vx=(dv_x[l]-dv_x[j])/((dv_t[l]-dv_t[j])/1000.f+1e-3f); break; } }   // px/ms over the last >=40 ms
+  last_gesture=t;
+  if(gw_slide_drag_end(vx)){ if(haptic) haptic(18); }
+  else { page=drag_from; page_us=t; gw_faces_dir(-drag_dir); render(); gw_slide_drag_back_done(); }
+  if(touch_log) ESP_LOGW(TAG,"drag release vx=%.2f px/ms page=%d",vx,page); }
 static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
-  if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(!standby) sb_ev(SB_EV_ACTIVITY,"touch"); if(built&&!standby&&!gw_slide_active()) gw_slide_prepare(); if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
-  else if(c==LV_EVENT_RELEASED){ if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
+  if(c==LV_EVENT_PRESSING){ drag_move(p); return; }
+  if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; drag_used=false; dv_n=0; if(!standby) sb_ev(SB_EV_ACTIVITY,"touch"); if(built&&!standby&&!gw_slide_active()) gw_slide_prepare(); if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
+  else if(c==LV_EVENT_RELEASED){ drag_release(); if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
 // P0 (2.6.4 crash): F20/F21 keep a raw .fallback to the theme text font. LvglBuiltInFont owns a heap COPY of the
 // builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
 // lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,

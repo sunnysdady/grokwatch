@@ -87,23 +87,48 @@ static void compose_push(uint8_t* dst,int y0,int n,float q){ compose_style(dst,y
     const uint16_t* rim=(const uint16_t*)(m_new+o); int il=sl>lo?sl:lo, ih=sh<hi?sh:hi;   // the rim stays put (new page's), content slides under it
     for(int x=0;x<W;x++) d[x]=(x<lo||x>hi)?0:(x<il||x>ih)?rim[x]:s_bg;
     span((uint8_t*)d,m_old+o,xo,sl,sh,il,ih); span((uint8_t*)d,m_new+o,xn,sl,sh,il,ih); } }
+// ---- style 3: push + soft edges. Same layout as push, but content fades into the page fill near the rim and at the
+// moving page edges (FEATHER px), and the outgoing page fades out while the incoming one fades in.
+#define FEATHER 40
+static inline uint16_t mix(uint16_t c,uint16_t b,int a){ if(a>=32) return c; if(a<=0) return b;   // a/32 of c over b
+  int r=((c>>11)*a+(b>>11)*(32-a))>>5, g=(((c>>5)&63)*a+((b>>5)&63)*(32-a))>>5, l=((c&31)*a+(b&31)*(32-a))>>5; return (uint16_t)(r<<11|g<<5|l); }
+static void compose_soft(uint8_t* dst,int y0,int n,float q){ compose_push(dst,y0,n,q); if(q>=1.f) return;
+  int xn=s_dir*(int)(W*(1.f-q)+0.5f), xo=xn-s_dir*W;
+  int go=(int)(32*(1.f-q*1.4f)), gn=(int)(32*(0.3f+q*0.9f)); if(go<0) go=0; if(gn>32) gn=32;   // old gone by ~70 %, new full by ~80 %
+  for(int r=0;r<n;r++){ int y=y0+r, lo=s_lo[y], hi=W-1-lo, sl=s_in[y], sh=W-1-sl; if(sh<sl) continue;
+    int il=sl>lo?sl:lo, ih=sh<hi?sh:hi; uint16_t* d=(uint16_t*)(dst+(size_t)r*W*2);
+    for(int x=il;x<=ih;x++){ int so=x-xo, sn=x-xn, g, e;
+      if(so>=sl&&so<=sh){ g=go; e=so-sl<sh-so?so-sl:sh-so; } else if(sn>=sl&&sn<=sh){ g=gn; e=sn-sl<sh-sn?sn-sl:sh-sn; } else continue;
+      int ed=x-il<ih-x?x-il:ih-x; if(ed<e) e=ed; int a=e>=FEATHER?g:g*e/FEATHER;
+      if(a<32) d[x]=mix(d[x],s_bg,a); } } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
-static void run_direct(void){ if(s_style==2) s_bg=pick_bg(); int64_t t0=hnow(), tf=t0, tc=0, tw=0; int fr=0, mx=0, i=0; hw->wait();
-  for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out jumped 126 px in frame 1 and crawled in the last 4 (reads as a pop)
-    int v=(int)(q*1000+0.5f), x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
-    for(int y=0;y<W;y+=hw->rows,i++){ int n=W-y<hw->rows?W-y:hw->rows; uint8_t* b=hw->buf(i&1);
-      int64_t a=hnow(); if(s_style==2) compose_push(b,y,n,q); else if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old); int64_t c=hnow(); hw->wait(); tc+=c-a; tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
-    if(hw->frame_done) hw->frame_done();
-    int64_t t=hnow(); int fm=(int)(t-tf); if(fm>mx) mx=fm; tf=t; fr++;
-    if(last) break; }
-  hw->wait(); st_comp_ms=(int)(tc/1000); st_wait_ms=(int)(tw/1000); st_frames=fr; st_ms=(int)((hnow()-t0)/1000); st_max_us=mx; }
+static int64_t s_tc, s_tw; static int s_fr, s_mx, s_i; static int64_t s_tf;
+// push one full frame at progress q (0 = exactly the old page, 1 = exactly the new page)
+static void push_frame(float q){ int v=(int)(q*1000+0.5f), x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
+  if(q<=0.f){ x_new=s_dir*W; x_old=0; }
+  for(int y=0;y<W;y+=hw->rows,s_i++){ int n=W-y<hw->rows?W-y:hw->rows; uint8_t* b=hw->buf(s_i&1);
+    int64_t a=hnow(); if(q<=0.f) compose(b,y,n,x_new,x_old); else if(s_style==3) compose_soft(b,y,n,q); else if(s_style==2) compose_push(b,y,n,q); else if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old);
+    int64_t c=hnow(); hw->wait(); s_tc+=c-a; s_tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
+  if(hw->frame_done) hw->frame_done();
+  int64_t t=hnow(); int fm=(int)(t-s_tf); if(fm>s_mx) s_mx=fm; s_tf=t; s_fr++; }
+static int64_t s_t0;
+static void stats_begin(void){ s_t0=s_tf=hnow(); s_tc=s_tw=0; s_fr=s_mx=0; hw->wait(); }
+static void stats_end(void){ hw->wait(); st_comp_ms=(int)(s_tc/1000); st_wait_ms=(int)(s_tw/1000); st_frames=s_fr; st_ms=(int)((hnow()-s_t0)/1000); st_max_us=s_mx; }
+// animate q0 -> q1 over dur ms with curve 0 = smoothstep, 1 = cubic ease-out (starts at the finger's speed)
+static void animate(float q0,float q1,int dur,int curve){ int64_t t0=hnow();
+  for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=dur; float p=last?1.f:(float)el/dur, k;
+    if(curve){ float u=1.f-p; k=1.f-u*u*u; } else k=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out from rest jumped 126 px in frame 1
+    push_frame(last?q1:q0+(q1-q0)*k); if(last) break; } }
+static void run_direct(void){ if(s_style>=2) s_bg=pick_bg(); stats_begin(); animate(0.f,1.f,GW_SLIDE_DUR,0); stats_end(); }
+// the screen already shows the final page: repaint only the top layer (page dots), which the snapshot leaves out
+static void land(void){ lv_obj_t* top=lv_layer_top();
+  for(uint32_t i=0;i<lv_obj_get_child_count(top);i++){ lv_obj_invalidate(lv_obj_get_child(top,i)); } }
 bool gw_slide_start(int dir){ if(!have_old) return false; have_old=false; s_dir=dir<0?-1:1;
   if(!snap(&sb_new,m_new,&snap_us[1])) return false;
   if(hw){ run_direct();
     // the last pushed frame already is the new page: drop the full-screen redraw render() queued (90-200 ms on device)
     // and repaint only the top layer (page dots), which the screen snapshot leaves out
-    if(s_style!=1){ lv_display_t* d=lv_display_get_default(); d->inv_p=0; lv_obj_t* top=lv_layer_top();   // cover leaves old-page pixels outside the card
-      for(uint32_t i=0;i<lv_obj_get_child_count(top);i++){ lv_obj_invalidate(lv_obj_get_child(top,i)); } }
+    if(s_style!=1){ lv_display_get_default()->inv_p=0; land(); }   // cover leaves old-page pixels outside the card
     if(done_cb) done_cb();
     return true; }
   ov=lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(ov); lv_obj_set_size(ov,W,W); lv_obj_set_pos(ov,0,0);
@@ -115,3 +140,28 @@ bool gw_slide_start(int dir){ if(!have_old) return false; have_old=false; s_dir=
   lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,ov); lv_anim_set_exec_cb(&a,ax); lv_anim_set_values(&a,0,1000);
   lv_anim_set_duration(&a,GW_SLIDE_DUR); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_set_completed_cb(&a,anim_done); lv_anim_start(&a);
   return true; }
+
+// ---- 2.6.32 finger-following slide (direct mode only). The caller switches to the target page and renders it, then
+// drag_begin() snapshots it; drag_to() pushes one frame per touch sample; drag_end() settles with the finger's speed.
+// LVGL's refresh timer is paused meanwhile, so nothing it draws lands on top of the drag frames.
+static bool s_drag; static float s_q;
+bool gw_slide_can_drag(void){ return hw&&have_old&&!s_drag; }
+bool gw_slide_dragging(void){ return s_drag; }
+bool gw_slide_drag_begin(int dir){ if(!gw_slide_can_drag()) return false; have_old=false; s_dir=dir<0?-1:1;
+  if(!snap(&sb_new,m_new,&snap_us[1])) return false;
+  lv_display_t* d=lv_display_get_default(); d->inv_p=0;   // the render that preceded is in the snapshot; later changes still get drawn at landing
+  lv_timer_pause(lv_display_get_refr_timer(d)); if(s_style>=2) s_bg=pick_bg();
+  s_drag=true; s_q=0; stats_begin(); return true; }
+void gw_slide_drag_to(int dx){ if(!s_drag) return; float q=(float)(-s_dir*dx)/W; s_q=q<0?0:q>1?1:q; push_frame(s_q); }
+bool gw_slide_drag_end(float vx){ if(!s_drag) return false;
+  float vq=-s_dir*vx/W;   // progress per ms
+  bool fling=fabsf(vx)>0.25f, commit=fling?vq>0:s_q>0.4f; float q1=commit?1.f:0.f, dq=q1-s_q;
+  int dur=(int)(120+300*fabsf(dq)); if(fling&&(vq>0)==(dq>0)&&fabsf(vq)>1e-4f){ dur=(int)(3*fabsf(dq)/fabsf(vq)); }   // cubic ease-out starts at slope 3*dq/dur = finger speed
+  if(dur<160) dur=160;
+  if(dur>420) dur=420;
+  if(dq!=0.f) animate(s_q,q1,dur,1); else push_frame(q1);
+  stats_end(); s_drag=false; lv_timer_resume(lv_display_get_refr_timer(lv_display_get_default()));
+  if(commit) land();
+  if(done_cb) done_cb();
+  return commit; }
+void gw_slide_drag_back_done(void){ lv_display_get_default()->inv_p=0; land(); }   // after the caller re-rendered the old page

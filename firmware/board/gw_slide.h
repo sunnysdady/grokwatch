@@ -27,6 +27,16 @@ void gw_slide_set_hw(const gw_slide_hw_t* hw);
 void gw_slide_last_stats(int* frames,int* ms,int* max_frame_us);   // direct mode: last slide
 void gw_slide_last_split(int* compose_ms,int* wait_ms);   // direct mode: time composing vs waiting for the bus
 void gw_slide_set_style(int s);   // 0 legacy disc cards, 1 cover, 2 push under a fixed rim (default)
+// 2.6.32 finger-following slide (direct mode only):
+//   touch-down: gw_slide_prepare(); first horizontal move: if gw_slide_can_drag(), switch to the target page, render it,
+//   gw_slide_drag_begin(dir); every move: gw_slide_drag_to(dx); release: gw_slide_drag_end(vx px/ms) -> true = landed on
+//   the new page, false = went back (the caller restores the old page, renders it, then gw_slide_drag_back_done()).
+bool gw_slide_can_drag(void);
+bool gw_slide_dragging(void);
+bool gw_slide_drag_begin(int dir);
+void gw_slide_drag_to(int dx);
+bool gw_slide_drag_end(float vx);
+void gw_slide_drag_back_done(void);
 void gw_slide_cancel(void);       // jump to the end (real page shows)
 void gw_slide_set_done_cb(void (*cb)(void));
 int  gw_slide_last_snap_us(int which);   // 0 old, 1 new: time to render the snapshot

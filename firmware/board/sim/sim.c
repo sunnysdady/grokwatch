@@ -118,21 +118,36 @@ static uint8_t* sh_buf(int i){ return sl_b[i]; }
 static void sh_push(int y0,int n,uint8_t* b){ memcpy(&fb[(size_t)y0*W],b,(size_t)n*W*2); }
 static void sh_wait(void){}
 static int64_t sh_now(void){ return sl_t; }
-static void sh_frame(void){ gf_px+=(long)W*W; gf_cnt++; char p[256]; snprintf(p,sizeof p,"%s/gif_%s_%03d.ppm",OUT,sl_tag,gif_n++); save_ppm(p); sl_t+=16667; }
+static void sh_frame(void){ gf_px+=(long)W*W; gf_cnt++; char p[256]; snprintf(p,sizeof p,"%s/gif_%s_%03d.ppm",OUT,sl_tag,gif_n++); save_ppm(p); sl_t+=30000; }
 static const gw_slide_hw_t sim_hw={16,sh_buf,sh_push,sh_wait,sh_now,sh_frame};
 static void slide_gif(const char* tag,int to,int dd){ sl_tag=tag; sl_t=0; gw_slide_set_hw(&sim_hw); gif_n=0; gf_px=gf_cnt=refr_n=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
   go(to,dd); double sm=snap_ms; flushed=0; frame(); { static uint16_t ref[W*W]; memcpy(ref,fb,sizeof fb); lv_obj_invalidate(lv_screen_active()); frame(); int bad=0; for(int i=0;i<W*W;i++) bad+=fb[i]!=ref[i];   // landing without a full redraw must equal one
     printf("SLIDE %s landing px=%ld (full=%d) diff_vs_full_redraw=%d\n",tag,flushed-(long)W*W,W*W,bad); missing_total+=bad>0; } flushed=0; int fr=0; while(gw_slide_active()&&fr<40){ step(30); gif_frame(tag); fr++; } step(30); gif_frame(tag);
   char nm[64]; snprintf(nm,sizeof nm,"slide %s (snapshot both + build %.1f ms host)",tag,sm); perf(nm);
   printf("SLIDE %s frames=%d slide_active_after=%d page_x=%d\n",tag,fr,gw_slide_active(),gw_faces_page_x()); }
+// 2.6.32 finger-following slide: scripted drag samples (dx from touch-down), then release with vx px/ms
+static void drag_gif(const char* tag,int dir,const int* xs,int nx,float vx,int expect){ sl_tag=tag; sl_t=0; gw_slide_set_hw(&sim_hw); gif_n=0; int from=page;
+  gw_slide_prepare(); page=(page+dir+GW_NCORE)%GW_NCORE; gw_faces_dir(dir); render(); int ok=gw_slide_drag_begin(dir);
+  for(int i=0;i<nx;i++) gw_slide_drag_to(xs[i]);
+  int c=gw_slide_drag_end(vx); if(!c){ page=from; gw_faces_dir(-dir); render(); gw_slide_drag_back_done(); }
+  flushed=0; frame(); long land=flushed; static uint16_t ref[W*W]; memcpy(ref,fb,sizeof fb); lv_obj_invalidate(lv_screen_active()); frame(); int bad=0; for(int i=0;i<W*W;i++) bad+=fb[i]!=ref[i];
+  int f,ms,mx; gw_slide_last_stats(&f,&ms,&mx);
+  printf("DRAG %s began=%d landed=%s (want %s) frames=%d settle_ms=%d landing_px=%ld diff_vs_full_redraw=%d %s\n",tag,ok,c?"new":"old",expect?"new":"old",f,ms,land,bad,(c==expect&&!bad&&ok)?"OK":"FAIL");
+  missing_total+=!(c==expect&&!bad&&ok); }
 static void after24(void){ (void)sl_y; char nm[64]; gw_faces_set_slide(false); sim_slide=1;
   for(int n=0;n<2;n++){ const char* D=n?"night":"day"; night=n; gw_faces_set_night(n); gw_faces_create(lv_screen_active()); gw_grok_set_night(n);
     gw_grok_variant(2); page=1; render(); step(400);
     snprintf(nm,sizeof nm,"a24_%s_face",D); shot(nm);
-    for(int sty=0;sty<=2;sty++){ gw_slide_set_style(sty);
+    for(int sty=0;sty<=3;sty++){ gw_slide_set_style(sty);
       snprintf(nm,sizeof nm,"a24slide_%s_style%d_face_ride",D,sty); slide_gif(nm,2,1);
       snprintf(nm,sizeof nm,"a24slide_%s_style%d_ride_face",D,sty); slide_gif(nm,1,-1); }
     gw_slide_set_style(2);
+    { static const int fl[]={-20,-45,-80,-120}, sl[]={-15,-40,-70,-100}, lg[]={-30,-90,-160,-230,-300}, rt[]={25,60,110};
+      snprintf(nm,sizeof nm,"drag_%s_fling",D); drag_gif(nm,1,fl,4,-0.8f,1);
+      snprintf(nm,sizeof nm,"drag_%s_short_back",D); drag_gif(nm,1,sl,4,0.f,0);
+      snprintf(nm,sizeof nm,"drag_%s_long_slow",D); drag_gif(nm,1,lg,5,-0.05f,1);
+      snprintf(nm,sizeof nm,"drag_%s_fling_right",D); drag_gif(nm,-1,rt,3,0.9f,1);
+      snprintf(nm,sizeof nm,"drag_%s_fling_reversed",D); drag_gif(nm,1,lg,5,0.6f,0); }
     snprintf(nm,sizeof nm,"a24slide_%s_face_grok",D); slide_gif(nm,0,-1);
     static const char* SN[]={"idle","listening","thinking","speaking","offline"};
     for(int st=0;st<5;st++){ gw_grok_state(st); gw_grok_level(70); gw_grok_text("assistant","这段字幕不应出现"); step(st==1?400:300);
