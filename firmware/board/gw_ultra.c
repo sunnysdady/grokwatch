@@ -60,7 +60,7 @@ static lv_obj_t *r_arc,*r_speed,*r_unit,*r_f[2],*r_fl[2],*r_hint;
 static lv_obj_t *sh_scroll,*sh_app,*sh_t,*sh_b;
 static lv_obj_t *cc,*cc_tile[GW_CC_N],*cc_ic[GW_CC_N],*cc_lb[GW_CC_N],*cc_val[GW_CC_N],*cc_stat; static void (*cc_cb)(int);
 // nav
-static lv_obj_t *v_img,*v_dist,*v_dir,*v_meta,*v_idle[4];
+static lv_obj_t *v_img,*v_dist,*v_dir,*v_meta,*v_idle[4],*v_lt,*v_ltd,*v_ltn;
 static lv_image_dsc_t v_dsc; static uint8_t v_px[48*48]; static uint8_t v_last[288]; static bool v_has=false;
 // chat deco
 static lv_obj_t *c_time;
@@ -215,6 +215,9 @@ void gw_faces_create(lv_obj_t* parent){
   v_card=pill(p,290,60,0,112);
   v_dir=label(v_card,F21,K_TXT,0,0); lv_obj_set_width(v_dir,260); lv_label_set_long_mode(v_dir,LV_LABEL_LONG_DOT);
   v_meta=label(p,F20,K_SEC,0,168);
+  // traffic light: small capsule right of the arrow (same row, never moves other elements); hidden when no data
+  v_lt=pill(p,86,36,118,-108); v_ltd=disc(v_lt,12,K_RED); lv_obj_align(v_ltd,LV_ALIGN_LEFT_MID,14,0);
+  v_ltn=label(v_lt,F20,K_TXT,0,0); lv_obj_align(v_ltn,LV_ALIGN_LEFT_MID,34,0); lv_obj_add_flag(v_lt,LV_OBJ_FLAG_HIDDEN);
   v_idle[0]=disc(p,140,K_CARD); lv_obj_align(v_idle[0],LV_ALIGN_CENTER,0,-50); lv_obj_set_style_border_width(v_idle[0],3,0);
   v_idle[1]=lv_label_create(v_idle[0]); lv_obj_set_style_text_font(v_idle[1],&gu_icon,0); lv_label_set_text(v_idle[1],I_NAV); lv_obj_center(v_idle[1]);
   v_idle[2]=label(p,F21,K_TXT,0,64); v_idle[3]=label(p,F20,K_SEC,0,102);
@@ -309,7 +312,9 @@ void gw_faces_show(int page, const gw_state_t* s){
   if(page==GW_PAGE_FACE){
     on_rim(f_sec,222,s->ss*6);
     { static const char* CN[]={"日","一","二","三","四","五","六"}; snprintf(b,sizeof b,"周%s %d",CN[s->wday%7],s->day); lv_label_set_text(f_date,b); (void)WE; }
-    snprintf(b,sizeof b,"Grok 额度 %s",s->grok_credit&&s->grok_credit[0]?s->grok_credit:"\xE2\x80\x94"); lv_label_set_text(f_km,b);  // never invent a number
+    if(s->usage_pct>=0&&s->usage_reset&&s->usage_reset[0]) snprintf(b,sizeof b,"Grok Bot %d%% · %s",s->usage_pct,s->usage_reset);
+    else if(s->usage_pct>=0) snprintf(b,sizeof b,"Grok Bot %d%%",s->usage_pct); else snprintf(b,sizeof b,"Grok Bot \xE2\x80\x94");   // never invent a number
+    lv_label_set_text(f_km,b); lv_obj_update_layout(f_km); { int w=lv_obj_get_width(f_km)+44; lv_obj_set_width(f_pill,w<180?180:(w>300?300:w)); lv_obj_align(f_pill,LV_ALIGN_CENTER,0,78); }
     if(s->ss!=f_ss){ float to=s->ss*6.f; bool step1=f_ss>=0&&(s->ss==(f_ss+1)%60)&&!enter;
       f_ss=s->ss; lv_anim_delete(&f_sa,ax_sec);
       if(step1){ s_from=to-6.f; if(s_from<0) s_from+=360.f; sec_inval(f_sa); f_sa=s_from; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_overshoot); }
@@ -356,7 +361,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     lv_label_set_text(t_empty[2],s->todo_state==3?"服务器未启用待办\n请检查服务配置":s->todo_state==2?"连不上服务器\n检查服务与网络":"长按说话\n添加待办");
     for(int i=0;i<3;i+=2) any?lv_obj_add_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(t_empty[i],LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_NAV){
-    lv_obj_t* act[]={v_img,v_row,v_card,v_meta};
+    lv_obj_t* act[]={v_img,v_row,v_card,v_meta}; if(!s->nav_active) lv_obj_add_flag(v_lt,LV_OBJ_FLAG_HIDDEN);
     for(int i=0;i<4;i++) s->nav_active?lv_obj_remove_flag(act[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(act[i],LV_OBJ_FLAG_HIDDEN);
     for(int i=0;i<4;i+=(i==0?2:1)) s->nav_active?lv_obj_add_flag(v_idle[i],LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(v_idle[i],LV_OBJ_FLAG_HIDDEN);
     if(s->nav_active){
@@ -370,7 +375,12 @@ void gw_faces_show(int page, const gw_state_t* s){
           else if((unsigned char)*q<0x80){ if(!(*q==' '&&j&&d[j-1]==' ')) d[j++]=*q; q++; } else q++; }
         d[j]=0; char* sp=strrchr(d,' '); const char* un="";
         if(sp){ *sp=0; un=sp+1; } lv_label_set_text(v_dist,d); lv_label_set_text(v_unit,un); nav_layout(); } lv_label_set_text(v_dir,s->nav_dir?s->nav_dir:"");
-      snprintf(b,sizeof b,"%s  " "\xC2\xB7" "  ETA %s",s->nav_dur?s->nav_dur:"",s->nav_eta?s->nav_eta:""); lv_label_set_text(v_meta,b);
+      { bool hd=s->nav_dur&&s->nav_dur[0], he=s->nav_eta&&s->nav_eta[0];   // no ETA: show only what we have, never a dangling "ETA"
+        if(hd&&he) snprintf(b,sizeof b,"%s  " "\xC2\xB7" "  ETA %s",s->nav_dur,s->nav_eta); else if(hd) snprintf(b,sizeof b,"剩余 %s",s->nav_dur); else if(he) snprintf(b,sizeof b,"ETA %s",s->nav_eta); else b[0]=0;
+        lv_label_set_text(v_meta,b); b[0]?lv_obj_remove_flag(v_meta,LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(v_meta,LV_OBJ_FLAG_HIDDEN); }
+      if(s->light_s>0){ snprintf(b,sizeof b,"%d",s->light_s); lv_label_set_text(v_ltn,b);
+        uint32_t lc=s->light_c=='G'?K_GRN:(s->light_c=='Y'?K_YEL:K_RED); lv_obj_set_style_bg_color(v_ltd,col(lc),0); lv_obj_remove_flag(v_lt,LV_OBJ_FLAG_HIDDEN); }
+      else lv_obj_add_flag(v_lt,LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_set_style_border_color(v_idle[0],col(K_TER),0); lv_obj_set_style_border_opa(v_idle[0],LV_OPA_COVER,0);
       lv_obj_set_style_text_color(v_idle[1],col(K_SEC),0);

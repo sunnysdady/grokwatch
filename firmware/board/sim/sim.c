@@ -59,7 +59,7 @@ static int sim_ss=40;
 static void render(void){ time_t t0=time(NULL); struct tm t; localtime_r(&t0,&t); (void)t;
   gw_state_t s={.hh=21,.mm=18,.ss=sim_ss,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
   s.ble=gw_model_linked(true,now_us()); s.phone_batt=gw_m.phone_batt; s.ride_km=gw_m.ride_km; s.dnd=dnd;
-  s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta; s.nav_icon=gw_m.has_icon?gw_m.icon:NULL;
+  s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta; s.nav_icon=gw_m.has_icon?gw_m.icon:NULL; s.light_s=gw_model_light_left(now_us()); s.light_c=gw_m.light_c; s.usage_pct=gw_m.usage_pct; s.usage_reset=gw_m.usage_reset;
   s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
   s.n_todo=td_n; s.todo_open=td_open; s.todo_state=td_state; for(int i=0;i<td_n;i++){ s.todo_text[i]=td_text[i]; s.todo_done[i]=td_done[i]; }
   gw_faces_show(page,&s); }
@@ -79,6 +79,19 @@ static void rx(uint8_t t,const void* p,int l){ int n=gw_frame(fr,t,p,l); int ev=
   if(ev&(GW_EV_TURN_SOON|GW_EV_TURN_NOW)) printf("  haptic: %s\n",ev&GW_EV_TURN_NOW?"double (turn now)":"long (200 m)"); render(); }
 static void rx_strs(uint8_t t,const char* a,const char* b,const char* c,const char* d4){ uint8_t p[900]; int n=0; const char* v[4]={a,b,c,d4};
   for(int i=0;i<4;i++){ if(!v[i]) break; int l=strlen(v[i]); memcpy(p+n,v[i],l); n+=l; p[n++]=0; } rx(t,p,n); }
+static void hello(void); static void icon_left(void); static void nav_on(int on);
+static void rx5(const char* a,const char* b,const char* c,const char* d4,const char* e){ uint8_t p[300]; int n=0; const char* v[5]={a,b,c,d4,e};
+  for(int i=0;i<5;i++){ if(!v[i]) break; int l=strlen(v[i]); memcpy(p+n,v[i],l); n+=l; p[n++]=0; } rx(0x11,p,n); }
+static void usage(int pct,const char* r){ uint8_t p[20]; p[0]=pct; int l=r?strlen(r):0; memcpy(p+1,r,l); p[1+l]=0; rx(0x50,p,l+2); }
+static void v11_extra(const char* D){ char nm[48]; gw_grok_visible(false);
+  hello(); nav_on(1); icon_left(); rx5("350 米","科技园南路","12分钟","21:31","L=23;C=R"); page=GW_PAGE_NAV; render(); snprintf(nm,sizeof nm,"v11_%s_nav_light_red",D); shot(nm);
+  rx5("180 米","科技园南路","11分钟","21:31","L=8;C=G"); snprintf(nm,sizeof nm,"v11_%s_nav_light_green",D); shot(nm);
+  rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); snprintf(nm,sizeof nm,"v11_%s_nav_nolight",D); shot(nm);
+  rx_strs(0x11,"350 米","科技园南路","19分钟",""); snprintf(nm,sizeof nm,"v11_%s_nav_noeta",D); shot(nm);
+  rx_strs(0x11,"","正在导航","",""); snprintf(nm,sizeof nm,"v11_%s_nav_fallback",D); shot(nm); nav_on(0);
+  gw_m.usage_pct=-1; gw_m.usage_reset[0]=0; go(GW_PAGE_FACE,1); snprintf(nm,sizeof nm,"v11_%s_face_usage_none",D); shot(nm);
+  usage(42,"18:00"); go(GW_PAGE_FACE,1); snprintf(nm,sizeof nm,"v11_%s_face_usage_42",D); shot(nm);
+  usage(100,"周一"); go(GW_PAGE_FACE,1); snprintf(nm,sizeof nm,"v11_%s_face_usage_100",D); shot(nm); gw_m.usage_pct=-1; }
 static void hello(void){ uint8_t p[2]={82,0}; rx(0x01,p,2); }
 static void speed(float k){ int v=(int)(k*10); uint8_t p[2]={v&255,v>>8}; rx(0x20,p,2); }
 static void nav_on(int on){ uint8_t p[1]={on}; rx(0x10,p,1); }
@@ -149,6 +162,17 @@ int main(int argc,char**argv){
   gw_grok_state(2); shot("grok_thinking");
   gw_grok_state(3); gw_grok_text("assistant","明早深圳多云转阵雨，降雨概率 60%，6 点到 9 点风力 3 级。建议带雨衣，路面湿滑注意刹车距离。"); shot("grok_speaking");
   gw_grok_state(4); gw_grok_status("Grok 离线 · 检查 Wi-Fi"); shot("grok_offline");
+  // 2.6.11 subtitle review: short Q&A, ack status, long reply (server sends it sentence by sentence), day+night
+  for(int n=0;n<2;n++){ char nm[48]; const char* D=n?"night":"day"; gw_grok_set_night(n);
+    gw_grok_state(3); gw_grok_text("user","明天周几？"); gw_grok_text("assistant","明天是周一，10月26号。"); snprintf(nm,sizeof nm,"v11_%s_short",D); shot(nm);
+    gw_grok_state(2); gw_grok_text("user","你现在能连接上我的Grokbot吗？"); snprintf(nm,sizeof nm,"v11_%s_question",D); shot(nm);
+    gw_grok_state(3); gw_grok_text("assistant","已收到 正在处理。"); snprintf(nm,sizeof nm,"v11_%s_ack",D); shot(nm);
+    gw_grok_text("assistant","能连上，我是你的私人助理，"); snprintf(nm,sizeof nm,"v11_%s_long1",D); shot(nm);
+    gw_grok_text("assistant","手表的问题会经过 Slack 转到我这里，"); snprintf(nm,sizeof nm,"v11_%s_long3",D); shot(nm);
+    gw_grok_text("assistant","能连上，我是你的私人助理，现在正在回你的话。手表的问题会经过 Slack 转到我这里，你直接问就行。"); snprintf(nm,sizeof nm,"v11_%s_longraw",D); shot(nm);
+    gw_grok_text("user",""); for(int st=0;st<5;st++){ gw_grok_state(st); step(st==1?400:300); snprintf(nm,sizeof nm,"v11_%s_expr%d",D,st); shot(nm); }
+    gw_grok_state(0); }
+  gw_grok_set_night(false); v11_extra("day"); go(0,-1); gw_grok_visible(true);
   // face v2 review: 3 variants x 5 states, day + night (subtitles cleared so the face reads alone)
   gw_grok_text("user",""); for(int n=0;n<2;n++){ gw_grok_set_night(n); for(int v=0;v<3;v++){ gw_grok_variant(v); for(int st=0;st<5;st++){ char nm[40];
     gw_grok_state(st); step(st==1?400:300); snprintf(nm,sizeof nm,"fv%d_%s_s%d",v,n?"night":"day",st); shot(nm); } } }
@@ -179,7 +203,7 @@ int main(int argc,char**argv){
   // 8c) night pass over every core page (same model state as the day shots)
   gw_grok_visible(false); night=true; gw_faces_set_night(true); gw_faces_create(lv_screen_active());
   go(1,1); shot("n_face"); speed(23.4f); go(2,1); shot("n_ride");
-  nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0);
+  nav_on(1); icon_left(); rx_strs(0x11,"350 米","科技园南路","12分钟","21:31"); page=GW_PAGE_NAV; render(); shot("n_nav"); nav_on(0); v11_extra("night");
   td_n=3; td_open=2; td_state=1; td_text[0]="买水"; td_text[1]="给车胎打气"; td_text[2]="周日骑行路线"; td_done[0]=false; td_done[1]=false; td_done[2]=true;
   go(GW_PAGE_TODO,1); shot("n_todo"); td_n=0; td_open=0; render(); shot("n_todo_empty");
   go(0,-1); gw_grok_state(0); gw_grok_text("user",""); shot("n_grok_idle");

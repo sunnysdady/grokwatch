@@ -130,7 +130,7 @@ static void render(){
   s.nav_active=gw_m.nav_active; s.nav_dist=gw_m.dist; s.nav_dir=gw_m.road; s.nav_dur=gw_m.dur; s.nav_eta=gw_m.eta;
   s.n_todo=gw_todo.n; s.todo_open=gw_todo.open; s.todo_state=gw_todo.state;
   for(int i=0;i<gw_todo.n;i++){ s.todo_text[i]=gw_todo.text[i]; s.todo_done[i]=gw_todo.done[i]; }
-  s.nav_icon=gw_m.has_icon?gw_m.icon:nullptr; s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
+  s.nav_icon=gw_m.has_icon?gw_m.icon:nullptr; s.light_s=gw_model_light_left(now_us()); s.light_c=gw_m.light_c; s.usage_pct=gw_m.usage_pct; s.usage_reset=gw_m.usage_reset; s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
   gw_faces_show(page,&s);
 }
 static void refresh(){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; render(); }

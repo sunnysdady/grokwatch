@@ -16,7 +16,9 @@ typedef struct {
   int ride_min;
   // voice to-do (server JSON store via Wi-Fi). todo_state: 0 ok, 1 loading, 2 offline
   int n_todo, todo_open, todo_state; const char* todo_text[GW_TODO_ROWS]; bool todo_done[GW_TODO_ROWS];
-  const char* grok_credit;          // remaining Grok credit, e.g. "$12.40"; NULL/"" = unknown -> shows "—"
+  const char* grok_credit;          // legacy, unused since 2.6.11
+  int usage_pct; const char* usage_reset; // Grok Bot usage from the app (0x50); usage_pct<0 = unknown -> "—"
+  int light_s; char light_c;         // nav traffic-light countdown (0 = none), colour R/G/Y (0 = unknown)
 } gw_state_t;
 // carousel = CHAT..NAV (GW_NCORE pages, shown in dots).
 enum { GW_PAGE_CHAT=0, GW_PAGE_FACE, GW_PAGE_RIDE, GW_PAGE_TODO, GW_PAGE_NAV, GW_NCORE, GW_NPAGES=GW_NCORE };

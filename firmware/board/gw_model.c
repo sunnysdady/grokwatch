@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-gw_model_t gw_m = { .last_m=-1, .phone_batt=-1 };
+gw_model_t gw_m = { .last_m=-1, .phone_batt=-1, .usage_pct=-1 };
 
 void gw_utf8_copy(char* dst, int cap, const char* src, int n){
   if(cap<=0) return; if(n>cap-1) { n=cap-1; while(n>0 && ((unsigned char)src[n]&0xC0)==0x80) n--; }
@@ -43,10 +43,15 @@ static int one(uint8_t t,const uint8_t* p,int n,int64_t now){
       if(a){ bool stale=gw_m.nav_sig_t&&now-gw_m.nav_sig_t>=(int64_t)GW_NAV_STALE_S*1000000; if(gw_m.nav_active||stale) break; gw_m.nav_active=true; ev|=GW_EV_NAV_START; break; }
       if(!gw_m.nav_active&&!gw_m.nav_sig_t) break;
       bool was=gw_m.nav_active; gw_m.nav_active=false; if(was) ev|=GW_EV_NAV_END|summary(now);
-      gw_m.last_m=-1; rearm(); gw_m.nav_sig=0; gw_m.nav_sig_t=0; gw_m.has_icon=false; gw_m.dist[0]=gw_m.road[0]=gw_m.dur[0]=gw_m.eta[0]=0; break; }
+      gw_m.last_m=-1; rearm(); gw_m.nav_sig=0; gw_m.nav_sig_t=0; gw_m.has_icon=false; gw_m.light_s=0; gw_m.dist[0]=gw_m.road[0]=gw_m.dur[0]=gw_m.eta[0]=0; break; }
   case 0x11: { gw_m.last_nav=now; const char* s;
       s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.dist,sizeof gw_m.dist,s,l); s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.road,sizeof gw_m.road,s,l);
       s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.dur,sizeof gw_m.dur,s,l);  s=cs(p,n,&i,&l); gw_utf8_copy(gw_m.eta,sizeof gw_m.eta,s,l);
+      gw_m.light_s=0; gw_m.light_c=0;                 // optional 5th string "k=v;k=v" (docs/nav-0x11-ext.md); absent = old app
+      if(i<n){ s=cs(p,n,&i,&l); for(int k=0;k+1<l;){ int e=k; while(e<l&&s[e]!=';') e++;
+          if(s[k]=='L'&&s[k+1]=='='){ int v=atoi(s+k+2); if(v>0&&v<=300){ gw_m.light_s=v; gw_m.light_t=now; } }
+          if(s[k]=='C'&&s[k+1]=='='&&k+2<e&&strchr("RGY",s[k+2])) gw_m.light_c=s[k+2];
+          k=e+1; } }
       uint32_t sig=fnv(p,n); if(sig!=gw_m.nav_sig||!gw_m.nav_sig_t){ gw_m.nav_sig=sig; gw_m.nav_sig_t=now; }
       if(!gw_m.nav_active && now-gw_m.nav_sig_t<(int64_t)GW_NAV_STALE_S*1000000){ gw_m.nav_active=true; ev|=GW_EV_NAV_START; }
       ev|=turn_alert(meters(gw_m.dist));
@@ -57,6 +62,7 @@ static int one(uint8_t t,const uint8_t* p,int n,int64_t now){
       if(v>30){ gw_m.last_move=now; if(!gw_m.ride_start) gw_m.ride_start=now; }
       else if(gw_m.ride_start&&now-gw_m.last_move>600000000LL) ev|=summary(now);
       snprintf(gw_m.speed,sizeof gw_m.speed,"%d",(v+5)/10); ev|=GW_EV_SPEED; } break;
+  case 0x50: if(n>=1){ gw_m.usage_pct=p[0]<=100?p[0]:-1; i=1; const char* r=cs(p,n,&i,&l); gw_utf8_copy(gw_m.usage_reset,sizeof gw_m.usage_reset,r,n>1?l:0); ev|=GW_EV_USAGE; } break;   // docs/usage-frame.md
   case 0x30: break;   // legacy NOTIFY frame from old apps: ignored (notifications removed in 2.6.2)
   case 0x40: if(n>=4){ gw_m.time_unix=p[0]|p[1]<<8|p[2]<<16|(uint32_t)p[3]<<24; gw_m.tz_min=n>=6?(int16_t)(p[4]|p[5]<<8):480; ev|=GW_EV_TIME; } break;
   }
@@ -72,4 +78,5 @@ int gw_model_tick(int64_t now){ int ev=0;
   if(gw_m.nav_active&&gw_m.nav_sig_t&&now-gw_m.nav_sig_t>=(int64_t)GW_NAV_STALE_S*1000000){ gw_m.nav_active=false; gw_m.has_icon=false; ev|=GW_EV_NAV_END; }
   return ev; }
 bool gw_model_linked(bool ble,int64_t now){ return ble&&gw_m.last_rx&&now-gw_m.last_rx<10000000; }
+int gw_model_light_left(int64_t now){ if(!gw_m.nav_active||gw_m.light_s<=0) return 0; int left=gw_m.light_s-(int)((now-gw_m.light_t)/1000000); return left>0?left:0; }
 int gw_model_ride_min(int64_t now){ return gw_m.ride_start?(int)((now-gw_m.ride_start)/60000000):0; }

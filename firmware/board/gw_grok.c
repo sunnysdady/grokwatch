@@ -30,6 +30,7 @@ static uint32_t g_now, g_pool_at, g_morph_at;
 static uint8_t g_pool_pos;
 static float g_points[2][48][2], g_from[2][48][2], g_to[2][48][2];
 static void apply_skin(void);
+#define GW_SUB_W 260   // subtitle width: inside the 466 px round screen's chord at the subtitle rows, 18 px margin
 static const char* const HINT[]={"长按说话","正在聆听…","思考中…","","离线"};
 static lv_obj_t* rect(lv_obj_t* p,int w,int h,int r,uint32_t c){ lv_obj_t* o=lv_obj_create(p); lv_obj_remove_style_all(o); lv_obj_set_size(o,w,h);
   lv_obj_set_style_radius(o,r,0); lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0); lv_obj_set_style_bg_color(o,lv_color_hex(c),0);
@@ -105,15 +106,17 @@ static void draw_avatar(lv_event_t* event){
   if(g_st==0){ float p=(float)(g_now%7000)/7000; gx=p<.5f?5*ease((p-.40f)/.06f):5-5*ease((p-.90f)/.06f); }
   if(g_st==2){ gx=12; gy=-11; }
   // eye size per variant/state
-  int ew=g_var==1?30:27, eh=g_var==1?30:39; if(g_st==1){ ew+=3; eh+=4; }
-  int sep=g_var==1?32:35, ey=fy-6;
+  // 2.6.11: every variant and state uses round eyes (Sunny: no long/slit eyes). Never taller or wider than 1.2:1.
+  int ew=30, eh=30; if(g_st==1){ ew+=3; eh+=3; }
+  int sep=32, ey=fy-6;
   uint32_t bk=g_now%4300; float open=bk<70?1-bk/70.f:(bk<160?(bk-70)/90.f:1); if(open<.12f) open=.12f;
   if(g_st==2) open=open<.85f?open:.85f;
   if(g_var==2&&!off&&!g_night){ lv_color_t blush=lv_color_mix(lv_color_hex(0xF4A9A0),lv_color_hex(SK->body),g_night?70:110);
     fill_rr(L,blush,LV_OPA_COVER,fx-sep-20,ey+30,26,14); fill_rr(L,blush,LV_OPA_COVER,fx+sep+20,ey+30,26,14); }
   for(int k=-1;k<=1;k+=2){ int ex=fx+k*sep+(int)gx, eyy=ey+(int)gy;
     if(off){ arc_(L,ink,6,ex,eyy-6,11,20,160); continue; }   // asleep: soft closed lids
-    int h=(int)(eh*open); if(h<6) h=6; fill_rr(L,ink,LV_OPA_COVER,ex,eyy,ew,h);
+    if(open<.55f){ arc_(L,ink,6,ex,eyy-6,11,20,160); continue; }   // blink: soft closed lid, never a flat bar
+    int h=(int)(eh*open); if(h<ew*5/6) h=ew*5/6; fill_rr(L,ink,LV_OPA_COVER,ex,eyy,ew,h);
     if(open>.6f){ int hs=g_var==1?8:7; fill_rr(L,hi,LV_OPA_COVER,ex-ew/2+hs/2+4,eyy-h/2+hs/2+5,hs,hs); } }
   // mouth
   int mx=fx+(int)(gx*.5f), my=ey+36+(int)(gy*.3f);
@@ -165,11 +168,11 @@ void gw_grok_create(lv_obj_t* parent){
   // Subtitles: the question is one fixed line (ellipsis); the reply lives in its own 2-line window below it and
   // scrolls so the newest text shows. A long reply can never climb over the question or the character.
   int lh=lv_font_get_line_height(F20);
-  g_user=lv_label_create(g_root); lv_obj_set_style_text_font(g_user,F20,0); lv_obj_set_width(g_user,270); lv_obj_set_style_text_opa(g_user,200,0); lv_obj_set_height(g_user,lh);
+  g_user=lv_label_create(g_root); lv_obj_set_style_text_font(g_user,F20,0); lv_obj_set_width(g_user,GW_SUB_W); lv_obj_set_style_text_opa(g_user,200,0); lv_obj_set_height(g_user,lh);
   lv_label_set_long_mode(g_user,LV_LABEL_LONG_DOT); lv_obj_set_style_text_align(g_user,LV_TEXT_ALIGN_CENTER,0); lv_obj_align(g_user,LV_ALIGN_CENTER,0,92);
-  g_sub=lv_obj_create(g_root); lv_obj_remove_style_all(g_sub); lv_obj_set_size(g_sub,284,lh*2+8); lv_obj_align_to(g_sub,g_user,LV_ALIGN_OUT_BOTTOM_MID,0,8);
+  g_sub=lv_obj_create(g_root); lv_obj_remove_style_all(g_sub); lv_obj_set_size(g_sub,GW_SUB_W,lh*2+8); lv_obj_align_to(g_sub,g_user,LV_ALIGN_OUT_BOTTOM_MID,0,8);
   lv_obj_set_scroll_dir(g_sub,LV_DIR_VER); lv_obj_set_scrollbar_mode(g_sub,LV_SCROLLBAR_MODE_OFF); lv_obj_remove_flag(g_sub,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLL_ELASTIC);
-  g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_width(g_reply,284); lv_obj_set_style_text_line_space(g_reply,4,0);
+  g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_width(g_reply,GW_SUB_W); lv_obj_set_style_text_line_space(g_reply,4,0);
   lv_label_set_long_mode(g_reply,LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(g_reply,LV_TEXT_ALIGN_CENTER,0);
   lv_label_set_text(g_user,""); lv_label_set_text(g_reply,""); lv_label_set_text(g_stat,HINT[0]);
   apply_skin();
@@ -191,11 +194,12 @@ void gw_grok_text(const char* role,const char* t){ if(!g_root||!t) return;
   if(role&&!strcmp(role,"user")){ lv_label_set_text(g_user,t); lv_label_set_text(g_reply,""); }
   else lv_label_set_text(g_reply,t);
   { const char* rt=lv_label_get_text(g_reply); const lv_font_t* f=lv_obj_get_style_text_font(g_reply,0); lv_point_t sz;
-    lv_text_get_size(&sz,rt,f,0,4,284,LV_TEXT_FLAG_NONE); int lines=(sz.y+4)/(lv_font_get_line_height(f)+4), w=284;
-    if(lines>1){ int lo=120, hi=284; while(lo<hi){ int m=(lo+hi)/2; lv_text_get_size(&sz,rt,f,0,4,m,LV_TEXT_FLAG_NONE);
-        if((sz.y+4)/(lv_font_get_line_height(f)+4)>lines) lo=m+1; else hi=m; } w=lo+2; }
+    lv_text_get_size(&sz,rt,f,0,4,GW_SUB_W,LV_TEXT_FLAG_NONE); int lines=(sz.y+4)/(lv_font_get_line_height(f)+4), w=GW_SUB_W;
+    if(lines>1){ int lo=120, hi=GW_SUB_W; while(lo<hi){ int m=(lo+hi)/2; lv_text_get_size(&sz,rt,f,0,4,m,LV_TEXT_FLAG_NONE);
+        if((sz.y+4)/(lv_font_get_line_height(f)+4)>lines) lo=m+1; else hi=m; } w=lo+2>GW_SUB_W?GW_SUB_W:lo+2; }
     lv_obj_set_width(g_reply,w); lv_obj_align(g_reply,LV_ALIGN_TOP_MID,0,0); }
-  lv_obj_update_layout(g_sub); lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF); }
+  lv_obj_update_layout(g_sub); lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF);
+  if(g_stat&&g_st==3) lv_label_set_text(g_stat,""); }   // while speaking only the subtitle shows status (no double text)
 static void apply_skin(void){ if(!g_root) return;
   lv_obj_set_style_bg_color(g_root,lv_color_hex(SK->bg),0);
   for(int i=0;i<7;i++) lv_obj_set_style_bg_color(g_bar[i],lv_color_hex(SK->accent),0);
