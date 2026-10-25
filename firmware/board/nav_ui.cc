@@ -119,6 +119,17 @@ static void pf_timer(lv_timer_t* tm){ int64_t now=esp_timer_get_time(); uint32_t
     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
     (unsigned)m.free_size,(unsigned)m.total_size,(unsigned)m.frag_pct,secs>0?pf_frames/secs:0.f,pf_max_us/1000.f);
   pf_frames=0; pf_max_us=0; pf_last_print=now; if(up>=180) lv_timer_set_period(tm,60000); }
+// 2.6.14: second hand poll (50 ms, wall clock) + passive GW-SEC interval stats (serial log only, every 60 moves)
+#include <sys/time.h>
+static int64_t sc_last, sc_sum, sc_max, sc_min=INT64_MAX; static uint32_t sc_n, sc_late, sc_skip; static int sc_prev=-1;
+static void sec_cb(lv_timer_t*){ if(page!=GW_PAGE_FACE){ sc_last=0; sc_prev=-1; return; }
+  struct timeval tv; gettimeofday(&tv,nullptr); struct tm t; time_t s=tv.tv_sec; localtime_r(&s,&t);
+  if(!gw_faces_sec(t.tm_sec)) return; int64_t n=now_us();
+  if(sc_last){ int64_t d=n-sc_last; sc_sum+=d; sc_n++; if(d>sc_max) sc_max=d; if(d<sc_min) sc_min=d; if(d>1100000) sc_late++;
+    if(sc_prev>=0 && t.tm_sec!=(sc_prev+1)%60) sc_skip++;
+    if(sc_n>=60){ ESP_LOGW("GW-SEC","n=%u avg=%lldms min=%lldms max=%lldms late>1.1s=%u skipped=%u",(unsigned)sc_n,sc_sum/sc_n/1000,sc_min/1000,sc_max/1000,(unsigned)sc_late,(unsigned)sc_skip);
+      sc_n=0; sc_sum=0; sc_max=0; sc_min=INT64_MAX; sc_late=0; sc_skip=0; } }
+  sc_last=n; sc_prev=t.tm_sec; }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
@@ -129,7 +140,7 @@ static void build_ui(){
   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);
   if(touch_indev){ lv_indev_set_long_press_time(touch_indev,GW_CHAT_MIN_PRESS_US/1000); lv_indev_add_event_cb(touch_indev,indev_cb,LV_EVENT_ALL,nullptr); }
   gw_standby_create(lv_layer_top());
-  lv_timer_create(tick_cb,1000,nullptr); built=true;
+  lv_timer_create(tick_cb,1000,nullptr); lv_timer_create(sec_cb,50,nullptr); built=true;
   gw_faces_set_todo_cb([](int row){ GwTodoCheck(row); if(haptic) haptic(15); render(); });
   GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; if(page==GW_PAGE_TODO) render(); }); });
   { Settings s("gw",false); fps_log=s.GetInt("fpslog",0)!=0; }

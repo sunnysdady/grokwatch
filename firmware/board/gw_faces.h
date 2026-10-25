@@ -27,6 +27,8 @@ void gw_faces_set_night(bool on);    // Ultra-style red night mode (call before 
 void gw_faces_set_slide(bool on);    // false: direct page switch (set by the fps governor when slides drop < 30 fps)
 void gw_faces_set_fade(bool on);     // slide+fade (true) or slide-only (false) page transitions
 void gw_faces_create(lv_obj_t* parent);
+int  gw_faces_sec(int ss);           // 2.6.14: wall-clock second tick (call every ~50 ms)
+void gw_dial_finish(lv_layer_t* L,const lv_area_t* a,bool night); // 2.6.14 edge vignette + inner ring + light catch
 void gw_faces_set_fallback(const lv_font_t* f); // full CJK font for characters outside the built-in set
 void gw_faces_show(int page, const gw_state_t* st);
 #define GW_SLIDE_PX 140

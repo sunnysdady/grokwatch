@@ -51,7 +51,7 @@ static lv_obj_t *root,*pg[GW_NPAGES],*dotbar,*dots[GW_NCORE],*chat,*sheet,*sheet
 static int cur=-1, dir=1;
 // face
 static lv_obj_t *r_row,*r_dot,*r_dec;
-static int f_ss=-1; static float f_sa=-1, s_from;  // second hand: last second, drawn angle (deg)
+static int f_ss=-1; static float f_sa=-1, s_from, s_span=6.f;  // second hand: last second, drawn angle (deg)
 static lv_obj_t *f_sec,*f_date,*f_time,*f_g[3],*f_gv[3],*f_glink2,*f_hands,*f_pill,*f_km; static int f_hh=-1,f_mm=-1;
 static lv_obj_t *r_card[2],*v_unit,*v_card,*v_row;
 // ride
@@ -116,7 +116,7 @@ static void sec_inval(float deg){ if(deg<0||!f_hands) return; lv_area_t c; lv_ob
     int x0=b.x+(a.x-b.x)*t0, y0=b.y+(a.y-b.y)*t0, x1=b.x+(a.x-b.x)*t1, y1=b.y+(a.y-b.y)*t1;
     lv_area_t r={LV_MIN(x0,x1)-3,LV_MIN(y0,y1)-3,LV_MAX(x0,x1)+3,LV_MAX(y0,y1)+3}; lv_obj_invalidate_area(f_hands,&r); }
   lv_area_t hub={(c.x1+c.x2)/2-6,(c.y1+c.y2)/2-6,(c.x1+c.x2)/2+6,(c.y1+c.y2)/2+6}; lv_obj_invalidate_area(f_hands,&hub); }
-static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*0.006f; sec_inval(f_sa); }
+static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*s_span*0.001f; if(f_sa>=360.f) f_sa-=360.f; sec_inval(f_sa); }
 #define V_USCALE 144  /* 144/256 = 0.56 = mockup 54/96 */
 static void nav_layout(void){ lv_obj_update_layout(v_dist); lv_obj_update_layout(v_unit);
   int wn=lv_obj_get_width(v_dist), wu=lv_obj_get_width(v_unit), gap=17, x0=(400-(wn+gap+wu))/2;
@@ -134,8 +134,28 @@ static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_a
     sec_pts(f_sa,cx,cy,&q.p1,&q.p2); lv_draw_line(L,&q); }
   r.bg_color=col(A_ORANGE); lv_area_t h3={cx-5,cy-5,cx+5,cy+5}; lv_draw_rect(L,&r,&h3);
   r.bg_color=col(K_BG); lv_area_t h2={cx-2,cy-2,cx+2,cy+2}; lv_draw_rect(L,&r,&h2); }
+
+// 2.6.14 dial finish: what the promo boards add around the screen, done inside the 466 px glass with no bitmaps.
+// Edge vignette (6 dark rings) + hairline inner ring + soft top-left light catch. Pure LVGL arcs: 0 B heap, drawn under
+// the page content only where an invalid area reaches r>=200 px (second hand tip stops at 200, so ticks never pay for it).
+void gw_dial_finish(lv_layer_t* L,const lv_area_t* a,bool nt){
+  int cx=(a->x1+a->x2)/2, cy=(a->y1+a->y2)/2;
+  lv_draw_arc_dsc_t d; lv_draw_arc_dsc_init(&d); d.center.x=cx; d.center.y=cy; d.rounded=0;
+  // vignette: 11 x 2 px rings, quadratic falloff from the glass edge to r~212 (smooth on RGB565, no visible step)
+  d.color=lv_color_black(); d.width=2; d.start_angle=0; d.end_angle=360;
+  for(int i=0;i<11;i++){ int k=11-i; d.radius=233-i*2; d.opa=(uint8_t)(k*k*92/121); lv_draw_arc(L,&d); }
+  d.width=1; d.radius=228; d.color=lv_color_hex(nt?0x8A7E6E:0xCFE3DC); d.opa=nt?22:34; lv_draw_arc(L,&d);   // hairline: the "inner bezel" edge
+  static const int16_t S0[3]={198,184,170}, S1[3]={252,266,280}; static const uint8_t SO[3]={70,34,14};      // light catch, 10 o'clock
+  d.rounded=1; d.width=2; d.radius=227; d.color=lv_color_hex(nt?0xC9C2B4:0xFFFFFF);
+  for(int i=0;i<3;i++){ d.start_angle=S0[i]; d.end_angle=S1[i]; d.opa=nt?SO[i]/2:SO[i]; lv_draw_arc(L,&d); } }
+static void finish_cb(lv_event_t* e){ lv_area_t a; lv_obj_get_coords(lv_event_get_target_obj(e),&a);
+  const lv_area_t* clip=&lv_event_get_layer(e)->_clip_area; int cx=(a.x1+a.x2)/2, cy=(a.y1+a.y2)/2;
+  // skip when the invalid area sits fully inside r<200 (e.g. the second hand / hub)
+  int dx=LV_MAX(LV_ABS(clip->x1-cx),LV_ABS(clip->x2-cx)), dy=LV_MAX(LV_ABS(clip->y1-cy),LV_ABS(clip->y2-cy));
+  if(dx*dx+dy*dy<200*200) return; gw_dial_finish(lv_event_get_layer(e),&a,night); }
 static lv_obj_t* pill(lv_obj_t* p,int w,int h,int x,int y){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); lv_obj_set_size(c,w,h);
   lv_obj_set_style_radius(c,h/2>36?36:h/2,0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_bg_color(c,col(K_CARD),0);
+  lv_obj_set_style_border_width(c,1,0); lv_obj_set_style_border_color(c,col(K_CARD2),0); lv_obj_set_style_border_opa(c,140,0);  // 2.6.14: hairline edge = glass card
   lv_obj_remove_flag(c,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE); lv_obj_align(c,LV_ALIGN_CENTER,x,y); return c; }
 static void sheet_click(lv_event_t* e){ (void)e; gw_faces_sheet(NULL,NULL); }
 static lv_obj_t *t_head,*t_row[GW_TODO_ROWS],*t_box[GW_TODO_ROWS],*t_txt[GW_TODO_ROWS],*t_more,*t_empty[3];
@@ -233,6 +253,7 @@ void gw_faces_create(lv_obj_t* parent){
   chat=box(parent); lv_obj_move_to_index(chat,1);
   c_time=label(chat,&gu_sm,K_ORG,0,-192); lv_obj_set_style_text_letter_space(c_time,1,0);  // -192: clear of the Grok status line (-152)
   root=box(parent); lv_obj_set_style_bg_color(root,col(K_BG),0); lv_obj_set_style_radius(root,LV_RADIUS_CIRCLE,0); lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
+  lv_obj_add_event_cb(root,finish_cb,LV_EVENT_DRAW_MAIN_END,NULL);
   for(int i=1;i<GW_NPAGES;i++){ pg[i]=box(root); lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN); }
   // ---- FACE: Wayfinder bezel + bold numerals + 3 circular complications
   lv_obj_t* p=pg[GW_PAGE_FACE]; bezel(p,0,false);
@@ -264,6 +285,7 @@ void gw_faces_create(lv_obj_t* parent){
   t_head=label(p,F20,K_SEC,0,-150);
   for(int i=0;i<GW_TODO_ROWS;i++){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); t_row[i]=c; lv_obj_set_size(c,320,48);
     lv_obj_align(c,LV_ALIGN_CENTER,0,-112+i*54); lv_obj_set_style_bg_color(c,col(K_CARD),0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_radius(c,25,0);
+    lv_obj_set_style_border_width(c,1,0); lv_obj_set_style_border_color(c,col(K_CARD2),0); lv_obj_set_style_border_opa(c,140,0);
     lv_obj_add_flag(c,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_GESTURE_BUBBLE); lv_obj_remove_flag(c,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(c,todo_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
     t_box[i]=disc(c,26,K_CARD); lv_obj_set_style_border_width(t_box[i],3,0); lv_obj_set_style_border_color(t_box[i],col(K_SEC),0); lv_obj_align(t_box[i],LV_ALIGN_LEFT_MID,14,0);
@@ -374,6 +396,15 @@ static void fade_show(lv_obj_t* o,bool on,bool* st){ if(on==*st) return; *st=on;
   else { lv_anim_delete(o,ax_opa); lv_anim_t x; lv_anim_init(&x); lv_anim_set_var(&x,o); lv_anim_set_exec_cb(&x,ax_opa); lv_anim_set_values(&x,lv_obj_get_style_opa(o,0),0);
     lv_anim_set_duration(&x,140); lv_anim_set_path_cb(&x,lv_anim_path_ease_out); lv_anim_set_completed_cb(&x,hide_done); lv_anim_start(&x); } }   // exit faster than enter
 
+
+// 2.6.14 second hand: one tick per real second + 180 ms ease-out (Apple style). Driven by a 50 ms wall-clock poll, not by a
+// 1000 ms LVGL timer (that one beat against the second boundary: same second twice = stall, then +2 s = hard jump).
+// Always animates from the on-screen angle, so a late frame or a missed second never snaps. Returns 1 if the hand moved.
+int gw_faces_sec(int ss){ if(cur!=GW_PAGE_FACE||!f_hands||ss==f_ss||ss<0||ss>59) return 0;
+  float to=ss*6.f; if(f_ss<0||f_sa<0){ f_ss=ss; sec_inval(f_sa); f_sa=to; sec_inval(f_sa); return 1; }
+  f_ss=ss; lv_anim_delete(&f_sa,ax_sec); float d=to-f_sa; while(d<0) d+=360.f; while(d>=360.f) d-=360.f;
+  if(d>90.f){ sec_inval(f_sa); f_sa=to; sec_inval(f_sa); return 1; }   // clock set / resume: place, don't spin
+  s_from=f_sa; s_span=d; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_ease_out); return 1; }
 void gw_faces_show(int page, const gw_state_t* s){
   if(!root) return;
   bool enter=page!=cur; int prev=cur; cur=page;
@@ -398,10 +429,7 @@ void gw_faces_show(int page, const gw_state_t* s){
     if(s->usage_pct>=0&&s->usage_reset&&s->usage_reset[0]) snprintf(b,sizeof b,"Grok Bot %d%% · %s",s->usage_pct,s->usage_reset);
     else if(s->usage_pct>=0) snprintf(b,sizeof b,"Grok Bot %d%%",s->usage_pct); else snprintf(b,sizeof b,"Grok Bot \xE2\x80\x94");   // never invent a number
     lv_label_set_text(f_km,b); lv_obj_update_layout(f_km); { int w=lv_obj_get_width(f_km)+44; lv_obj_set_width(f_pill,w<180?180:(w>300?300:w)); lv_obj_align(f_pill,LV_ALIGN_CENTER,0,78); }
-    if(s->ss!=f_ss){ float to=s->ss*6.f; bool step1=f_ss>=0&&(s->ss==(f_ss+1)%60)&&!enter;
-      f_ss=s->ss; lv_anim_delete(&f_sa,ax_sec);
-      if(step1){ s_from=to-6.f; if(s_from<0) s_from+=360.f; sec_inval(f_sa); f_sa=s_from; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_ease_out); }   // 2.6.12: no bounce
-      else { sec_inval(f_sa); f_sa=to; sec_inval(f_sa); } }
+    if(enter){ lv_anim_delete(&f_sa,ax_sec); sec_inval(f_sa); f_ss=s->ss; f_sa=s->ss*6.f; sec_inval(f_sa); } else gw_faces_sec(s->ss);
     if(s->hh!=f_hh||s->mm!=f_mm){ f_hh=s->hh; f_mm=s->mm; lv_obj_invalidate(f_hands); }
     snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(f_time,b);
     t_bat=s->battery/100.f; uint32_t bc=s->charging?K_GRN:(s->battery<=20?K_RED:(s->battery<=40?K_YEL:K_GRN));

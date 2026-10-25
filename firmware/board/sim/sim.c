@@ -152,6 +152,17 @@ int main(int argc,char**argv){
   { gif_n=0; gf_px=0; gf_cnt=0; flushed=0; for(int k=0;k<50;k++){ step(20); gif_frame("still"); } perf("face idle (no tick)");
     gif_n=0; gf_px=0; gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0;
     for(int k=0;k<6;k++){ sim_ss=(sim_ss+1)%60; render(); for(int f=0;f<50;f++){ step(20); gif_frame("sec"); } } perf("second hand tick (1 s)");
+  { // 2.6.14 second-hand cadence: wall clock vs poll, with random 190-270 ms stalls like the device's slow frames
+    for(int mode=0;mode<2;mode++){ int per=mode?50:1000; double wall=0.437, nextp=0; int prev=-1,n=0,skip=0,stall=0; double last=-1,mx=0,mn=9,sum=0; srand(7);
+      sim_ss=0; render(); step(300);
+      for(int ms=0;ms<60000;ms+=10){ wall+=0.010; if(rand()%400==0){ int st=190+rand()%81; ms+=st; wall+=st/1000.0; stall++; }
+        if(ms>=nextp){ nextp=ms+per; int ss=((int)wall)%60;
+          int moved = mode? gw_faces_sec(ss) : (ss!=prev && prev>=0 ? (sim_ss=ss, render(), 1) : (prev<0?(sim_ss=ss,render(),0):0));
+          if(moved){ if(last>=0){ double d=wall-last; sum+=d; n++; if(d>mx)mx=d; if(d<mn)mn=d; if(prev>=0&&ss!=(prev+1)%60) skip++; } last=wall; }
+          prev=ss; }
+        tick+=10; lv_timer_handler(); }
+      printf("SECCADENCE %s: n=%d avg=%.0fms min=%.0fms max=%.0fms skipped=%d stalls=%d\n",mode?"2.6.14 50ms wall poll":"2.6.13 1000ms timer",n,n?sum/n*1000:0,mn*1000,mx*1000,skip,stall); } }
+
     sim_ss=40; }
   SWIPE_UP(); shot("control_center");
   tap(233-60,233-70); tap(233+60,233+62); shot("control_center_bright_dnd");
