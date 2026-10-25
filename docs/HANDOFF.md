@@ -31,7 +31,7 @@ StopWatch 圆屏手表（M5Stack StopWatch v1.0.1）上的**骑行大屏副表**
 - 屏幕 CO5300，466×466 圆形 AMOLED，QSPI，RGB565；触摸 CST820B。
 - 按键：
   - **红键**：接在 PMIC M5PM1 上。单击/双击读 PMIC 的 IRQ 状态（0x01 click、0x02 wake、0x04 double）和 `BTN_FLAG`（读后自动清零）。实测 IRQ 位在亮屏时不稳定，所以**单击以 BTN_FLAG 为准**，双击用 IRQ 0x04 或 400 ms 内两次 flag 判定，逻辑在 `gw_redkey.c`。初始化时要关掉 PMIC 的长按复位/关机，并解除 CLICK/DOUBLE/WAKE 的屏蔽。
-  - **黄键、蓝键**：GPIO 按键（具体引脚见 config.h / hardware.md，这里**未确认**）。三个键都送进待机状态机 `NavUiKey(SB_EV_…)`。
+  - **黄键、蓝键**：GPIO 按键，**黄键 G2、蓝键 G1**（官方说明书，Sunny 确认；与 config.h 的 BUTTON1_GPIO=2、BUTTON2_GPIO=1 一致）。三个键都送进待机状态机 `NavUiKey(SB_EV_…)`。
 - 三个上限：
   - 屏幕刷新约 60 Hz；
   - 传输：QSPI 40 MHz 时整屏约 21.7 ms（≈46 fps），80 MHz 时理论约 92 fps；现在用 40 MHz，没接 TE；
@@ -92,7 +92,7 @@ StopWatch 圆屏手表（M5Stack StopWatch v1.0.1）上的**骑行大屏副表**
 
 ## 10. 其他
 - App `io.grokwatch.app`：在本仓库 `android/`，main 上是 versionName 0.6.2（versionCode 62）。另外有 `app/0.6.3`、`app/0.7.1` 分支（哪个是最新发布版**未确认**）。无障碍读高德的实现在 `NavA11y.kt`，导航帧格式见 docs/nav-0x11-ext.md。
-- xiaozhi 服务器和 relay：仓库 `server/` 里有插件（gw_todo.py、gw_quota.py、ota_guard.py）和 INSTALL.md。MBA 上服务器的实际目录、启动命令，以及钥匙串里的条目名都**未确认**，请向 Sunny 确认，不要猜。
-- Slack 语音链路：手表上的提问经服务器转到 Slack，再由 Grok Bot 回复，转成语音播报（细节**未确认**，见 docs/relay/RELAY-2026-10-25.md）。
+- xiaozhi 服务器和 relay：仓库 `server/` 里有插件（gw_todo.py、gw_quota.py、ota_guard.py）和 INSTALL.md。MBA 上服务器的实际目录、启动命令，仍**未确认**（Slack 令牌的钥匙串条目已确认，见下一条），请向 Sunny 确认，不要猜。
+- Slack 语音链路：手表上的提问经服务器转到 Slack，再由 Grok Bot 回复，转成语音播报。走私有频道 **#grokwatch-voice**，令牌在 MBA 钥匙串条目 **`grokwatch-slack`**（Sunny 确认；令牌本身不进仓库、不进日志）。其余细节见 docs/relay/RELAY-2026-10-25.md。
 - GitHub `sunnysdady/grokwatch`：开源前要检查 git 历史里有没有密钥、内网地址、console.bin、NVS 或备份；公开的固件只能是 public.bin。当前推送状态**未确认**；不经 Sunny 原话同意不要推。
 - 宣传片 v4 在 box 的 `/workspace/gw-promo/v4`。

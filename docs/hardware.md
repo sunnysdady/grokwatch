@@ -11,6 +11,7 @@
 | 屏幕 | 1.75" AMOLED 466×466，驱动 CO5300，QSPI | 【规格】说明书 |
 | 屏幕引脚 | CS G39、SCK G40、TE G38、D0–D3 = G41/G42/G46/G45；复位 M5IOE1 PYG5，供电 M5IOE1 PYG8 | 【规格】说明书 |
 | 触摸 | CST820B，I2C G47/G48，INT G13，复位 M5IOE1 PYG4 | 【规格】说明书 |
+| 按键 | 黄键 G2（BUTTON1_GPIO）、蓝键 G1（BUTTON2_GPIO），GPIO 输入 | 【规格】说明书；【代码】config.h |
 | 电源 | M5PM1，450 mAh；红键 = PMIC 按键（单击报 IRQ 0x02/0x03 或 BTN_FLAG，见 gw_redkey.c） | 【规格】【实测】 |
 | 硬件 2D 加速 | ESP32-S3 **没有 PPA**（PPA 是 ESP32-P4 的外设）；可用的是 GDMA 和 PIE SIMD 指令 | 【规格】ESP32-S3 技术参考手册【推断：需再核对一次 TRM 目录】 |
 
