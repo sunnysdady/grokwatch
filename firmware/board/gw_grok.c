@@ -28,7 +28,10 @@ static int g_st=0, g_lvl=0;
 static lv_timer_t* g_tm;
 static uint32_t g_now, g_pool_at, g_morph_at;
 static uint8_t g_pool_pos;
-static float g_points[2][48][2], g_from[2][48][2], g_to[2][48][2];
+#include "gw_mem.h"
+#define GEYE_SZ (sizeof(float)*2*48*2)
+static float (*g_points)[48][2], (*g_from)[48][2], (*g_to)[48][2];   // PSRAM (2.3 KB moved out of internal DRAM)
+static void eyes_alloc(void){ if(!g_points){ g_points=gw_psram_calloc(GEYE_SZ); g_from=gw_psram_calloc(GEYE_SZ); g_to=gw_psram_calloc(GEYE_SZ); } }
 static void apply_skin(void);
 static void g_fade(lv_obj_t* o,uint32_t ms);
 #define GW_SUB_W 260   // subtitle width: inside the 466 px round screen's chord at the subtitle rows, 18 px margin
@@ -45,12 +48,12 @@ static float glance(uint32_t ms,uint32_t period){
   if(p<.9f) return -1;
   v=(p-.9f)/.1f; return -1+v*v*(3-2*v);
 }
-static void target_eye(bool immediate){
-  memcpy(g_from,g_points,sizeof g_from);
+static void target_eye(bool immediate){ eyes_alloc(); if(!g_points) return;
+  memcpy(g_from,g_points,GEYE_SZ);
   int ring=gw_aora_cfg[g_st].pool[g_pool_pos];
   for(int e=0;e<2;e++) for(int i=0;i<48;i++) for(int xy=0;xy<2;xy++)
     g_to[e][i][xy]=gw_aora_eyes[ring][e][i][xy]*.01f;
-  if(immediate) memcpy(g_points,g_to,sizeof g_points);
+  if(immediate) memcpy(g_points,g_to,GEYE_SZ);
   g_morph_at=g_now;
 }
 // Both eyes are rasterized as whole polygons into one A8 coverage mask, then blended once.

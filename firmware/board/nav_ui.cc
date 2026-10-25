@@ -105,10 +105,25 @@ static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_
 // before the old font is released).
 extern "C" void gw_grok_font_changed(const lv_font_t* f);
 static void on_text_font_changed(const lv_font_t* f){ gw_faces_set_fallback(f); gw_grok_font_changed(f); if(built) lv_obj_report_style_change(nullptr); }
+
+// ---- 2.6.12 passive GW-PERF line (serial log only, no console command): every 10 s, every 60 s after 3 min ----
+#include <esp_heap_caps.h>
+static uint32_t pf_frames; static int64_t pf_t0, pf_max_us, pf_last_print; static bool pf_hooked;
+static void pf_cb(lv_event_t* e){ int64_t t=esp_timer_get_time(); auto c=lv_event_get_code(e);
+  if(c==LV_EVENT_REFR_START) pf_t0=t; else if(c==LV_EVENT_REFR_READY && pf_t0){ int64_t d=t-pf_t0; if(d>pf_max_us) pf_max_us=d; pf_frames++; } }
+static void pf_timer(lv_timer_t* tm){ int64_t now=esp_timer_get_time(); uint32_t up=(uint32_t)(now/1000000);
+  if(!pf_hooked){ lv_display_add_event_cb(lv_display_get_default(),pf_cb,LV_EVENT_ALL,nullptr); pf_hooked=true; pf_last_print=now; pf_frames=0; pf_max_us=0; return; }
+  float secs=(now-pf_last_print)/1e6f; lv_mem_monitor_t m; lv_mem_monitor(&m);
+  ESP_LOGW("GW-PERF","up=%lus int=%u/min%u psram=%u/min%u lvgl=%u/%u free(frag%u%%) fps=%.1f slow=%.1fms",(unsigned long)up,
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+    (unsigned)m.free_size,(unsigned)m.total_size,(unsigned)m.frag_pct,secs>0?pf_frames/secs:0.f,pf_max_us/1000.f);
+  pf_frames=0; pf_max_us=0; pf_last_print=now; if(up>=180) lv_timer_set_period(tm,60000); }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
   LvglDisplay::SetTextFontChangedCallback(on_text_font_changed);
+  lv_timer_create(pf_timer,10000,nullptr);
   gw_faces_set_fallback(lv_obj_get_style_text_font(scr,LV_PART_MAIN)); gw_faces_set_night(night); gw_faces_set_fade(false); gw_faces_create(scr);
   lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);

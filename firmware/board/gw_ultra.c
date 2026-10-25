@@ -62,7 +62,7 @@ static lv_obj_t *cc,*cc_tile[GW_CC_N],*cc_ic[GW_CC_N],*cc_lb[GW_CC_N],*cc_val[GW
 // nav
 static lv_obj_t *v_img,*v_dist,*v_dir,*v_meta,*v_idle[4],*v_lt,*v_ltd,*v_ltn,*v_vec;
 static char v_turn[4]; static bool v_lt_on; static float v_k=1.f;
-static lv_image_dsc_t v_dsc; static uint8_t v_px[96*96]; static uint8_t v_last[288]; static bool v_has=false;
+static lv_image_dsc_t v_dsc; static uint8_t* v_px;   /* 96x96 A8, PSRAM */ static uint8_t v_last[288]; static bool v_has=false;
 // chat deco
 static lv_obj_t *c_time;
 // animation targets
@@ -164,6 +164,7 @@ int gw_faces_page_x(void){ return (cur>0&&cur<GW_NPAGES&&pg[cur])?lv_obj_get_x(p
 #define VA 120   /* arrow box, px */
 #define VW 18    /* stroke width */
 #define VRR 3.f  /* head corner radius */
+#include "gw_mem.h"
 void lv_image_cache_drop(const void* src);   /* lv_image_cache.h is not in lvgl.h */
 typedef struct { uint8_t k; float ax,ay,bx,by,r0,a0,sw; } vprim_t;   // k: 0 seg, 1 arc(center ax,ay radius r0 start a0 sweep sw), 2 tri(a,b,(r0,a0))
 static vprim_t vp[12]; static int vn; static float vtx,vty,vth; static uint8_t* v_vpx; static lv_image_dsc_t v_vdsc; static char v_built[4];
@@ -201,7 +202,7 @@ static void vbuild(const char* t){ vn=0; vtx=0; vty=0; vth=0; vminx=vminy=1e9f; 
   else if(t[0]=='U'){ vfwd(40); vturn(180*m,21); vfwd(8); vheadp(HL-2,HW-1); }     // UL: up, bend LEFT, head down on the left (CN U-turn)
   else if(!strcmp(t,"A")){ vp[vn++]=(vprim_t){1,0,0,0,0,30,0,6.2831853f}; vp[vn++]=(vprim_t){0,0,0,0,0,0,0,0}; vbb(0,0,39); }
   float ox=VA/2.f-(vminx+vmaxx)/2, oy=VA/2.f-(vminy+vmaxy)/2;   // centre the ink bbox
-  if(!v_vpx) v_vpx=lv_malloc(VA*VA); if(!v_vpx) return;
+  if(!v_vpx) v_vpx=gw_psram_calloc(VA*VA); if(!v_vpx) return;
   for(int py=0;py<VA;py++) for(int px=0;px<VA;px++){ float cov=0;
     for(int sy=0;sy<3;sy++) for(int sx=0;sx<3;sx++){ float x=px+(sx+.5f)/3-ox, y=py+(sy+.5f)/3-oy, d=1e9f;
       for(int i=0;i<vn;i++){ float e; if(!strcmp(t,"A")&&i==1) e=hypotf(x,y)-12.5f; else e=vprim(&vp[i],x,y); if(e<d)d=e; }
@@ -216,7 +217,7 @@ static void vdraw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t
   d.scale_x=d.scale_y=(int32_t)(v_k*256+.5f); d.pivot.x=VA/2; d.pivot.y=VA/2; lv_area_t r={a.x1,a.y1,a.x1+VA-1,a.y1+VA-1}; lv_draw_image(L,&d,&r); }
 static bool vknown(const char* t){ static const char* K[]={"S","L","R","SL","SR","HL","HR","UL","UR","A"}; for(int i=0;i<10;i++) if(t&&!strcmp(t,K[i])) return true; return false; }
 // 1-bit 48x48 -> 96x96 A8: 3x3 soften (rounds stair steps) -> 2x bilinear -> steep re-threshold (narrow AA edge, not blur)
-static void smooth_icon(const uint8_t* ic){ static uint8_t s[48*48];
+static void smooth_icon(const uint8_t* ic){ static uint8_t* s; if(!s) s=gw_psram_calloc(48*48); if(!v_px) v_px=gw_psram_calloc(96*96); if(!s||!v_px) return;
   for(int y=0;y<48;y++) for(int x=0;x<48;x++){ int acc=0; for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++){ int xx=x+dx, yy=y+dy;
       if(xx<0||yy<0||xx>47||yy>47) continue; int b=(ic[(yy*48+xx)/8]>>(7-((yy*48+xx)%8)))&1; acc+=b*((dx==0&&dy==0)?4:(dx==0||dy==0)?2:1); }
     s[y*48+x]=(uint8_t)(acc*255/16); }
@@ -453,7 +454,7 @@ void gw_faces_show(int page, const gw_state_t* s){
       else { if(v_turn[0]){ v_turn[0]=0; v_has=false; } lv_obj_add_flag(v_vec,LV_OBJ_FLAG_HIDDEN);
         if(s->nav_icon&&(!v_has||memcmp(v_last,s->nav_icon,288))){ memcpy(v_last,s->nav_icon,288); v_has=true; smooth_icon(s->nav_icon);
           memset(&v_dsc,0,sizeof v_dsc); v_dsc.header.magic=LV_IMAGE_HEADER_MAGIC; v_dsc.header.cf=LV_COLOR_FORMAT_A8; v_dsc.header.w=96; v_dsc.header.h=96; v_dsc.header.stride=96;
-          v_dsc.data=v_px; v_dsc.data_size=sizeof v_px; lv_image_set_src(v_img,&v_dsc); lv_obj_invalidate(v_img); turn_in(v_img); } }
+          v_dsc.data=v_px; v_dsc.data_size=96*96; lv_image_set_src(v_img,&v_dsc); lv_obj_invalidate(v_img); turn_in(v_img); } }
       { char d[32]; const char* src=s->nav_dist?s->nav_dist:""; int j=0;
         for(const char* q=src; *q && j<26; ){ if(!strncmp(q,"公里",6)||!strncmp(q,"千米",6)){ j+=snprintf(d+j,sizeof d-j,(j&&d[j-1]==' ')?"km":" km"); q+=6; } else if(!strncmp(q,"米",3)){ j+=snprintf(d+j,sizeof d-j,(j&&d[j-1]==' ')?"m":" m"); q+=3; }
           else if((unsigned char)*q<0x80){ if(!(*q==' '&&j&&d[j-1]==' ')) d[j++]=*q; q++; } else q++; }

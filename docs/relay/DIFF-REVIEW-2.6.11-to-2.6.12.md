@@ -53,3 +53,14 @@
   A = ring r30 w12 + dot r12.5, centred.
 - Bitmap fallback: 3x3 soften -> 2x bilinear -> steep threshold (x3.5) => ~1.2 px AA edge (~1.5 px on screen), no blur.
 - Exact Amap 48x48 -> vector mapping: NOT added (no captured real Amap icons to match against).
+
+## 2.6.12c (internal-heap fix + passive GW-PERF) — 2026-10-25
+- Hardware run of 2.6.12b: 1 boot, no panic, server saw 2.6.12, but gw_health never validated:
+  internal heap low-water 24392 B < 24576 B (GW_H_MIN_HEAP, unchanged). Earlier healthy boots: 31.9–33.5 KB.
+- Source: new 2.6.12 statics in internal .bss — v_px 9216 B (bitmap A8), smooth_icon temp 2304 B; plus eye
+  morph arrays g_points/g_from/g_to 2304 B. `.dram0.bss` 46128 -> 32352 B (-13.8 KB) after moving all of them
+  to PSRAM (gw_mem.h: heap_caps_calloc SPIRAM, falls back to calloc). Vector arrow mask (14.4 KB) also PSRAM
+  (was LVGL pool). No new tasks/stacks; opacity/scale anims draw from the LVGL pool (PSRAM), unchanged.
+- GW-PERF (nav_ui.cc): passive ESP_LOGW every 10 s, every 60 s after 3 min: internal free/min, PSRAM free/min,
+  LVGL pool free/total/frag, fps and slowest frame from LV_EVENT_REFR_START/READY. No console command.
+- Sim: 130/130 screenshots pixel-identical to 2.6.12b.
