@@ -19,7 +19,7 @@
 
 extern "C" void gw_ble_start(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
-void NavUiSetHaptic(void (*f)(int)); void NavUiSetWake(void (*f)()); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
+void NavUiSetHaptic(void (*f)(int)); void NavUiSetWake(void (*f)()); bool NavUiIsStandby(); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
 void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void);
 #include <esp_timer.h>
 #include "gw_health.h"
@@ -355,7 +355,7 @@ private:
             if (NavUiPowerPending()) return;
             Application::GetInstance().StopListening();
         });
-        // Power key (PMIC): click = screen off/on, double = power menu (needs Blue to confirm). Hardware long-press is untouched.
+        // Power key (PMIC): click = standby clock on/off, double = power menu (needs Blue to confirm). Hardware long-press is untouched.
         pmic_.setSingleResetDisable(true);
         pmic_.setDoubleOffDisable(true);
         esp_timer_create_args_t pa = {};
@@ -366,7 +366,10 @@ private:
                 if (st & M5PM1_IRQ_BTN_DOUBLE) { b->WakeScreen(); NavUiPowerMenu(true); }
                 else if (st & M5PM1_IRQ_BTN_CLICK) {
                     if (NavUiPowerPending()) { NavUiPowerMenu(false); return; }
-                    if (b->screen_off_) b->WakeScreen(); else { b->screen_off_ = true; b->backlight_->SetBrightness(0); }
+                    // 2.6.18: red key click toggles the standby clock (was: backlight off/on, which read as "does nothing"
+                    // to enter standby). A screen turned off by an older path is still woken by the same click.
+                    if (b->screen_off_ || NavUiIsStandby()) { b->WakeScreen(); NavUiStandby(false); }
+                    else { Haptic(15); NavUiStandby(true); }
                 }
             });
         };

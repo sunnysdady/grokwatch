@@ -377,7 +377,8 @@ void gw_faces_create(lv_obj_t* parent){
 void gw_faces_sheet(const char* t,const char* b){ if(!sheet) return; if(!t&&!b){ lv_obj_add_flag(sheet,LV_OBJ_FLAG_HIDDEN); return; }
   lv_label_set_text(sh_app,""); lv_obj_add_flag(sh_app,LV_OBJ_FLAG_HIDDEN);
   lv_label_set_text(sh_t,t?t:""); lv_obj_set_style_text_color(sh_t,col(K_ORG),0); lv_label_set_text(sh_b,b?b:"");
-  lv_obj_scroll_to_y(sh_scroll,0,LV_ANIM_OFF); lv_obj_remove_flag(sheet,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sheet); }
+  lv_obj_scroll_to_y(sh_scroll,0,LV_ANIM_OFF); lv_obj_remove_flag(sheet,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sheet);
+  if(dotbar){ lv_anim_delete(dotbar,NULL); lv_obj_set_style_opa(dotbar,0,0); } }  // 2.6.18: sheet now really stays on top; hide page dots like the CC does
 
 static const gw_cc_t* cc_st;
 void gw_cc_open(const gw_cc_t* st,void (*on_tap)(int)){ if(!cc) return; if(st&&dotbar){ lv_anim_delete(dotbar,NULL); lv_obj_set_style_opa(dotbar,0,0); } if(!st){ lv_obj_add_flag(cc,LV_OBJ_FLAG_HIDDEN); return; }
@@ -393,6 +394,7 @@ void gw_cc_open(const gw_cc_t* st,void (*on_tap)(int)){ if(!cc) return; if(st&&d
   lv_label_set_text(cc_val[2],st->night?"开":"关"); lv_label_set_text(cc_val[3],st->dnd?"开":"关");
   lv_obj_remove_flag(cc,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(cc); }
 bool gw_cc_is_open(void){ return cc&&!lv_obj_has_flag(cc,LV_OBJ_FLAG_HIDDEN); }
+bool gw_cc_on_top(void){ return gw_cc_is_open()&&lv_obj_get_index(cc)>lv_obj_get_index(root); }  // sim audit
 bool gw_faces_sheet_open(void){ return sheet&&!lv_obj_has_flag(sheet,LV_OBJ_FLAG_HIDDEN); }
 
 
@@ -443,7 +445,9 @@ void gw_faces_show(int page, const gw_state_t* s){
   }
   if(enter) gw_grok_visible(page==GW_PAGE_CHAT);  // the mint character IS the chat page (was never shown on device)
   if(page==GW_PAGE_CHAT){ lv_obj_add_flag(root,LV_OBJ_FLAG_HIDDEN); char b[8]; snprintf(b,sizeof b,"%02d:%02d",s->hh,s->mm); lv_label_set_text(c_time,b); return; }
-  lv_obj_remove_flag(root,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(root);
+  // 2.6.18: raise the face only when the page changes. It used to run on every 1 s render() and buried an open Control
+  // Center / sheet under the face within a second ("swipe up flashes, then snaps back to the clock").
+  lv_obj_remove_flag(root,LV_OBJ_FLAG_HIDDEN); if(enter){ lv_obj_move_foreground(root); if(gw_cc_is_open()) lv_obj_move_foreground(cc); if(gw_faces_sheet_open()) lv_obj_move_foreground(sheet); }
   if(enter){ for(int i=1;i<GW_NPAGES;i++) (i==page)?lv_obj_remove_flag(pg[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN);
     lv_obj_t* o=pg[page]; // Horizontal slide ALWAYS (fade flag only chose slide+fade vs slide-only, but used to disable the slide entirely,
     // so the swap was painted by the 16-line strip flush top->bottom and read as a vertical flip). +dir = enter from right.

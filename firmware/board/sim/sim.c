@@ -152,6 +152,9 @@ int main(int argc,char**argv){
   { gif_n=0; gf_px=0; gf_cnt=0; flushed=0; for(int k=0;k<50;k++){ step(20); gif_frame("still"); } perf("face idle (no tick)");
     gif_n=0; gf_px=0; gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0;
     for(int k=0;k<6;k++){ sim_ss=(sim_ss+1)%60; render(); for(int f=0;f<50;f++){ step(20); gif_frame("sec"); } } perf("second hand tick (1 s)");
+  { SWIPE_UP(); step(300); extern bool gw_cc_on_top(void); int o0=gw_cc_on_top(); for(int k=0;k<3;k++){ render(); step(1000); }
+    printf("AUDIT %s control center stays open over 3 s of 1 s renders (open after swipe=%d, after 3 s=%d)\n",o0&&gw_cc_on_top()?"OK":"FAIL",o0,gw_cc_on_top());
+    shot("cc_after_3s_renders"); SWIPE_DOWN(); step(300); printf("AUDIT %s swipe down closes control center\n",!gw_cc_is_open()?"OK":"FAIL"); render(); }
   { extern int gw_finish_on; for(int m=0;m<2;m++){ gw_finish_on=m; double a=now_ms(); for(int k=0;k<5;k++){ lv_obj_invalidate(lv_screen_active()); lv_refr_now(NULL);} printf("FULLREDRAW finish=%d: %.2f ms/frame (host)\n",m,(now_ms()-a)/5); } gw_finish_on=1; }
   { int mm0=sim_mm; double a=now_ms(); for(int k=0;k<5;k++){ sim_mm=(sim_mm+1)%60; render(); lv_refr_now(NULL);} printf("MINUTECHANGE: %.2f ms/frame (host)\n",(now_ms()-a)/5); sim_mm=mm0; }
   { // 2.6.14 second-hand cadence: wall clock vs poll, with random 190-270 ms stalls like the device's slow frames
