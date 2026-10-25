@@ -21,6 +21,7 @@
 #include "gw_input.h"
 #include "gw_sbsm.h"
 #include "gw_slide.h"
+#include "src/display/lv_display_private.h"   // flush_cb / buf_1 / buf_2 / flushing for the 2.6.25 direct-push slide
 #define TAG "NavUI"
 #define GW_RX_LOG 1  // log type/len of each incoming frame (no content)
 extern "C" bool gw_ble_link(void);
@@ -34,11 +35,11 @@ static void buzz(int ms){ if(haptic && !dnd) haptic(ms); }
 static void buzz2(){ if(!haptic || dnd) return; haptic(70); lv_timer_create([](lv_timer_t* t){ if(haptic) haptic(70); lv_timer_delete(t); },180,nullptr); }
 static int64_t page_us=0, wake_us=0; static uint32_t fr_total=0;
 static bool touch_log=false; static lv_indev_t* touch_indev=nullptr; static int64_t down_us=0; static lv_point_t down_pt={0,0};
-static void slide_begin_stats();   // 2.6.24 (frame split below)
+static void slide_begin_stats(); static void slide_abort_stats();   // 2.6.24 (frame split below)
 // 2.6.24: snapshot slide. Old screen -> PSRAM bitmap, new page rendered -> second bitmap, then only the two bitmaps move.
 // Replaces the fps governor that switched pages without any motion after two slow slides.
 static void go(int p,int d){ bool sl=built && gw_slide_snap_old(); page=(p%NPAGES+NPAGES)%NPAGES; page_us=now_us(); gw_faces_dir(d); if(haptic) haptic(18);
-  if(page==GW_PAGE_TODO) GwTodoFetch(); render(); if(sl && gw_slide_start(d)) slide_begin_stats(); }
+  if(page==GW_PAGE_TODO) GwTodoFetch(); render(); if(sl){ slide_begin_stats(); if(!gw_slide_start(d)) slide_abort_stats(); } }
 
 // ---- Control Center ----
 static gw_cc_t cc;
@@ -92,10 +93,26 @@ static void ff_ev(lv_event_t* e){ int64_t t=now_us(); auto c=lv_event_get_code(e
   else if(c==LV_EVENT_REFR_READY && ff_bytes){ int64_t tot=t-ff_t0; agg_add(&agg_all,tot); if(in_slide) agg_add(&agg_slide,tot);
     if(land_pending){ land_pending=false; ESP_LOGW("GW-SLIDE","landing frame (real page redraw) total=%.1fms px=%ukB",tot/1e3,(unsigned)(ff_bytes/1024)); }
     if(bench_left>0){ agg_add(&agg_bench,tot); if(--bench_left==0) ff_print("GW-BENCH",agg_bench,"full-screen redraw x3:"); else lv_obj_invalidate(lv_screen_active()); } } }
-static void slide_done(){ int64_t dur=now_us()-slide_t0; in_slide=false; land_pending=true; char ex[120];
+static bool sl_hw_on=false;
+static void slide_done(){ int64_t dur=now_us()-slide_t0; in_slide=false; land_pending=true; char ex[160];
+  if(sl_hw_on){ int f,ms,mx; gw_slide_last_stats(&f,&ms,&mx);
+    ESP_LOGW("GW-SLIDE","page slide DIRECT %dms frames=%d fps=%.1f max_frame=%.1fms | snap_old=%.1fms snap_new=%.1fms | total_with_snaps=%dms",ms,f,f*1e3/(ms>0?ms:1),mx/1e3,
+      gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3,(int)(dur/1000)); return; }
   snprintf(ex,sizeof ex,"page slide %dms fps=%.1f snap_old=%.1fms snap_new=%.1fms |",(int)(dur/1000),agg_slide.n*1e6/(double)(dur>0?dur:1),
     gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3); ff_print("GW-SLIDE",agg_slide,ex); }
 static void slide_begin_stats(){ agg_slide={}; in_slide=true; slide_t0=now_us(); }
+static void slide_abort_stats(){ in_slide=false; }
+// 2.6.25 direct-push slide: strips are composed into LVGL's own two DMA draw buffers and sent through the port's flush_cb
+// (it byte-swaps and calls esp_lcd_panel_draw_bitmap; its trans-done ISR clears disp->flushing). LVGL is idle meanwhile
+// because gw_slide_start() runs inside the LVGL task.
+static lv_display_t* sl_d(){ return lv_display_get_default(); }
+static uint8_t* sl_buf(int i){ lv_draw_buf_t* b=i?sl_d()->buf_2:sl_d()->buf_1; return b?b->data:nullptr; }
+static void sl_wait(){ int64_t t=now_us(); while(sl_d()->flushing && now_us()-t<250000) taskYIELD(); }
+static void sl_push(int y0,int n,uint8_t* b){ lv_display_t* d=sl_d(); lv_area_t a={0,y0,GW_SLIDE_W-1,y0+n-1}; d->flushing=1; d->flush_cb(d,&a,b); }
+static gw_slide_hw_t sl_hw={0,sl_buf,sl_push,sl_wait,nullptr,nullptr};
+static void slide_hw_init(){ lv_display_t* d=sl_d(); if(!d||!d->buf_1||!d->buf_2||!d->flush_cb) return;
+  int rows=(int)(d->buf_1->data_size/(GW_SLIDE_W*2)); if((size_t)rows*GW_SLIDE_W*2>d->buf_2->data_size) rows=(int)(d->buf_2->data_size/(GW_SLIDE_W*2));
+  rows&=~1; if(rows>=8){ sl_hw.rows=rows; gw_slide_set_hw(&sl_hw); sl_hw_on=true; ESP_LOGW("GW-SLIDE","direct push on: %d rows/strip, 2 buffers",rows); } }
 static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   if(fps_log && nfr>3) ESP_LOGW(TAG,"fps=%d frame avg %.1f ms max %.1f ms (%d frames / %.0f ms)",(int)(nfr*1e6/(t-fr_t0)),fr_sum/1e3/nfr,fr_max/1e3,nfr,(t-fr_t0)/1e3);
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }
@@ -250,7 +267,7 @@ static void build_ui(){
   { Settings s("gw",false); fps_log=s.GetInt("fpslog",0)!=0; }
   lv_display_add_event_cb(lv_display_get_default(),frame_start_cb,LV_EVENT_REFR_START,nullptr);
   lv_display_add_event_cb(lv_display_get_default(),frame_cb,LV_EVENT_REFR_READY,nullptr);
-  lv_display_add_event_cb(lv_display_get_default(),ff_ev,LV_EVENT_ALL,nullptr); gw_faces_set_slide(false); gw_slide_set_done_cb(slide_done);
+  lv_display_add_event_cb(lv_display_get_default(),ff_ev,LV_EVENT_ALL,nullptr); gw_faces_set_slide(false); gw_slide_set_done_cb(slide_done); slide_hw_init();
   lv_timer_create([](lv_timer_t* t){ agg_bench={}; bench_left=3; lv_obj_invalidate(lv_screen_active()); lv_timer_delete(t); },45000,nullptr);   // one passive full-screen redraw benchmark (same pixels) lv_timer_create(fps_cb,2000,nullptr); fr_t0=now_us();
 }
 static void render(){

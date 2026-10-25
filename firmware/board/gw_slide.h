@@ -11,6 +11,19 @@ extern "C" {
 bool gw_slide_snap_old(void);     // call BEFORE the page changes; false = no buffers, switch directly
 bool gw_slide_start(int dir);     // call AFTER the new page is rendered into the widget tree; +1 = new page from the right
 bool gw_slide_active(void);
+// Direct-push mode (2.6.25): when the board provides a panel path, the slide bypasses LVGL entirely. Every frame is
+// composed row by row from the two PSRAM snapshots into small DMA strips and pushed straight to the panel; LVGL does
+// no drawing during the slide. gw_slide_start() then runs the whole animation synchronously and returns when done.
+typedef struct {
+  int rows;                                   // rows per strip (even); two strip buffers
+  uint8_t* (*buf)(int i);                     // i = 0/1: DMA-capable strip buffer of rows*GW_SLIDE_W*2 bytes
+  void (*push)(int y0,int n,uint8_t* b);      // start sending rows [y0,y0+n) full width, returns without waiting
+  void (*wait)(void);                         // block until the previous push finished
+  int64_t (*now)(void);                       // optional clock (us); NULL = real clock
+  void (*frame_done)(void);                   // optional, after each composed frame
+} gw_slide_hw_t;
+void gw_slide_set_hw(const gw_slide_hw_t* hw);
+void gw_slide_last_stats(int* frames,int* ms,int* max_frame_us);   // direct mode: last slide
 void gw_slide_cancel(void);       // jump to the end (real page shows)
 void gw_slide_set_done_cb(void (*cb)(void));
 int  gw_slide_last_snap_us(int which);   // 0 old, 1 new: time to render the snapshot

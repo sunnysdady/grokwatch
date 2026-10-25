@@ -112,11 +112,19 @@ static void nav_on(int on){ uint8_t p[1]={on}; rx(0x10,p,1); }
 static void icon_left(void){ uint8_t ic[288]={0}; for(int y=0;y<48;y++)for(int x=0;x<48;x++){ int on=0; if(x>=28&&x<36&&y>=18&&y<44) on=1; if(y>=14&&y<22&&x>=14&&x<36) on=1; if(x>=4&&x<18&&abs(y-18)<=(x-4)) on=1;
     if(on) ic[(y*48+x)/8]|=0x80>>((y*48+x)%8);} for(int part=0;part<3;part++){ uint8_t p[97]; p[0]=part; memcpy(p+1,ic+96*part,96); rx(0x12,p,97);} }
 // ---- 2.6.24: snapshot slide frames + GrokBot page (day / night) -> a24_* files
-static void slide_gif(const char* tag,int to,int dd){ gif_n=0; gf_px=gf_cnt=refr_n=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
+// 2.6.25: direct-push slide on a virtual 60 Hz clock; every composed frame is saved (LVGL draws nothing meanwhile)
+static uint8_t sl_b[2][16*W*2]; static const char* sl_tag=""; static int64_t sl_t=0; static int sl_y=0;
+static uint8_t* sh_buf(int i){ return sl_b[i]; }
+static void sh_push(int y0,int n,uint8_t* b){ memcpy(&fb[(size_t)y0*W],b,(size_t)n*W*2); }
+static void sh_wait(void){}
+static int64_t sh_now(void){ return sl_t; }
+static void sh_frame(void){ gf_px+=(long)W*W; gf_cnt++; char p[256]; snprintf(p,sizeof p,"%s/gif_%s_%03d.ppm",OUT,sl_tag,gif_n++); save_ppm(p); sl_t+=16667; }
+static const gw_slide_hw_t sim_hw={16,sh_buf,sh_push,sh_wait,sh_now,sh_frame};
+static void slide_gif(const char* tag,int to,int dd){ sl_tag=tag; sl_t=0; gw_slide_set_hw(&sim_hw); gif_n=0; gf_px=gf_cnt=refr_n=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
   go(to,dd); double sm=snap_ms; int fr=0; while(gw_slide_active()&&fr<40){ step(30); gif_frame(tag); fr++; } step(30); gif_frame(tag);
   char nm[64]; snprintf(nm,sizeof nm,"slide %s (snapshot both + build %.1f ms host)",tag,sm); perf(nm);
   printf("SLIDE %s frames=%d slide_active_after=%d page_x=%d\n",tag,fr,gw_slide_active(),gw_faces_page_x()); }
-static void after24(void){ char nm[64]; gw_faces_set_slide(false); sim_slide=1;
+static void after24(void){ (void)sl_y; char nm[64]; gw_faces_set_slide(false); sim_slide=1;
   for(int n=0;n<2;n++){ const char* D=n?"night":"day"; night=n; gw_faces_set_night(n); gw_faces_create(lv_screen_active()); gw_grok_set_night(n);
     gw_grok_variant(2); page=1; render(); step(400);
     snprintf(nm,sizeof nm,"a24_%s_face",D); shot(nm);
@@ -130,7 +138,7 @@ static void after24(void){ char nm[64]; gw_faces_set_slide(false); sim_slide=1;
     gw_grok_state(2); for(int i=0;i<12;i++){ step(30); gif_frame(nm); } gw_grok_state(3); for(int i=0;i<24;i++){ step(30); gif_frame(nm); }
     gw_grok_state(0); for(int i=0;i<10;i++){ step(30); gif_frame(nm); }
     snprintf(nm,sizeof nm,"a24slide_%s_grok_face",D); slide_gif(nm,1,1); }
-  night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); gw_grok_set_night(false); sim_slide=0; }
+  night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); gw_grok_set_night(false); sim_slide=0; gw_slide_set_hw(NULL); }
 int main(int argc,char**argv){
   OUT=argv[1]; lv_init(); lv_tick_set_cb(tk);
   d=lv_display_create(W,W); static uint8_t buf[W*W*2]; lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_DIRECT); lv_display_set_flush_cb(d,flush); lv_display_add_event_cb(d,refr_cb,LV_EVENT_REFR_START,NULL);
