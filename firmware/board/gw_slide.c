@@ -47,28 +47,21 @@ static void compose(uint8_t* dst,int y0,int n,int x_new,int x_old){ int nl=x_new
     if(nr>nl) memcpy(d+nl*2,m_new+o+(size_t)(nl-x_new)*2,(size_t)(nr-nl)*2);
     seg(d,m_old+o,0,nl,x_old); seg(d,m_old+o,nr,W,x_old); } }
 
-// ---- transition styles (sim comparison): pages are extended past their round outline by repeating the rim pixel,
-// so a sliding page is a full-bleed rectangle (no round card edge, no black between pages). 0 = legacy compose.
+// ---- cover transition: the new page covers the old one, which parallaxes and dims. Pages are extended past their
+// round outline by repeating the rim pixel, so a sliding page is full-bleed (no round card edge, no black between pages).
 #include <math.h>
-static int s_style;
+static int s_style=1;   // 0 = legacy compose (disc cards), 1 = cover
 void gw_slide_set_style(int s){ s_style=s; }
-#define C0 ((W-1)/2.0f)
-static uint16_t spx(const uint8_t* bm,int y,int sx,int lo,int hi){ if(sx<lo) sx=lo; if(sx>hi) sx=hi; return ((const uint16_t*)bm)[(size_t)y*W+sx]; }
 static uint16_t dim(uint16_t c,int a){ return (uint16_t)((((c>>11)&31)*a>>5)<<11 | (((c>>5)&63)*a>>5)<<5 | ((c&31)*a>>5)); }
-static uint16_t mix(uint16_t x,uint16_t y,int a){ int b=32-a; return (uint16_t)((((x>>11)&31)*a+((y>>11)&31)*b)>>5<<11 | (((x>>5)&63)*a+((y>>5)&63)*b)>>5<<5 | ((x&31)*a+(y&31)*b)>>5); }
-// style 1 = A cover (new page covers old, old parallax + dimmed), 2 = B fixed rim ring, 3 = C slide + crossfade
-static void compose_style(uint8_t* dst,int y0,int n,float q){ const int RIN=206;
-  for(int r=0;r<n;r++){ int y=y0+r; float dy=y+0.5f-W/2.0f; float hc2=233.f*233.f-dy*dy; int hc=hc2>0?(int)sqrtf(hc2):0; int lo=(W/2)-hc, hi=(W/2)+hc-1; if(hi<lo) hi=lo;
-    uint16_t* d=(uint16_t*)(dst+(size_t)r*W*2);
-    int xn=s_dir*(int)(W*(1.f-q)+0.5f), xo=-s_dir*(int)(GW_SLIDE_PARALLAX*q+0.5f);
-    int a=(int)(q*32+0.5f);
-    for(int x=0;x<W;x++){ uint16_t c;
-      if(s_style==3){ int xn3=s_dir*(int)((W/4)*(1.f-q)+0.5f), xo3=-s_dir*(int)((W/8)*q+0.5f);
-        c=mix(spx(m_new,y,x-xn3,lo,hi),spx(m_old,y,x-xo3,lo,hi),a); }
-      else { bool ring=false; if(s_style==2){ float dx=x+0.5f-W/2.0f; ring=dx*dx+dy*dy>(float)RIN*RIN; }
-        if(ring) c=mix(spx(m_new,y,x,lo,hi),spx(m_old,y,x,lo,hi),a);
-        else { bool nw=x>=xn&&x<xn+W; c=nw?spx(m_new,y,x-xn,lo,hi):dim(spx(m_old,y,x-xo,lo,hi),32-(int)(14*q+0.5f)); } }
-      d[x]=c; } } }
+static void fill16(uint16_t* d,int n,uint16_t v){ while(n-->0) *d++=v; }
+static void compose_style(uint8_t* dst,int y0,int n,float q){
+  int xn=s_dir*(int)(W*(1.f-q)+0.5f), xo=-s_dir*(int)(GW_SLIDE_PARALLAX*q+0.5f), da=32-(int)(14*q+0.5f);
+  for(int r=0;r<n;r++){ int y=y0+r; float dy=y+0.5f-W/2.0f, h2=233.f*233.f-dy*dy; int hc=h2>0?(int)sqrtf(h2):0, lo=W/2-hc, hi=W/2+hc-1; if(hi<lo) hi=lo;
+    uint16_t* d=(uint16_t*)(dst+(size_t)r*W*2); const uint16_t* pn=(const uint16_t*)m_new+(size_t)y*W; const uint16_t* po=(const uint16_t*)m_old+(size_t)y*W;
+    int nl=xn>0?xn:0, nr=xn+W<W?xn+W:W;   // new page covers [nl,nr)
+    for(int x=0;x<nl;x++){ int sx=x-xo; sx=sx<lo?lo:sx>hi?hi:sx; d[x]=dim(po[sx],da); }
+    for(int x=nr;x<W;x++){ int sx=x-xo; sx=sx<lo?lo:sx>hi?hi:sx; d[x]=dim(po[sx],da); }
+    for(int x=nl;x<nr;x++){ int sx=x-xn; d[x]=pn[sx<lo?lo:sx>hi?hi:sx]; } } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
 static void run_direct(void){ int64_t t0=hnow(), tf=t0; int fr=0, mx=0, i=0; hw->wait();
   for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out jumped 126 px in frame 1 and crawled in the last 4 (reads as a pop)
