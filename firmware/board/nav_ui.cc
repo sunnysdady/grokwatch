@@ -120,16 +120,47 @@ static void pf_timer(lv_timer_t* tm){ int64_t now=esp_timer_get_time(); uint32_t
     (unsigned)m.free_size,(unsigned)m.total_size,(unsigned)m.frag_pct,secs>0?pf_frames/secs:0.f,pf_max_us/1000.f);
   pf_frames=0; pf_max_us=0; pf_last_print=now; if(up>=180) lv_timer_set_period(tm,60000); }
 // 2.6.14: second hand poll (50 ms, wall clock) + passive GW-SEC interval stats (serial log only, every 60 moves)
+// 2.6.15: passive stall diagnostics. On any move gap > 1.1 s print one GW-STALL line: page, longest LVGL loop gap
+// (gap between runs of this 50 ms lv_timer), wall-clock step vs esp_timer, device state, last BLE rx, wifi, and the top
+// CPU users during the gap (uxTaskGetSystemState delta vs the snapshot taken at the previous move). Snapshots: PSRAM.
 #include <sys/time.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include "gw_mem.h"
 static int64_t sc_last, sc_sum, sc_max, sc_min=INT64_MAX; static uint32_t sc_n, sc_late, sc_skip; static int sc_prev=-1;
-static void sec_cb(lv_timer_t*){ if(page!=GW_PAGE_FACE){ sc_last=0; sc_prev=-1; return; }
+static int64_t sc_cb_last, sc_cb_gap_max, sc_skew0; static uint32_t sc_stalls;
+enum { TS_MAX=48 };
+static TaskStatus_t *ts_prev, *ts_now; static UBaseType_t ts_np; static uint32_t ts_tot_prev;
+static void ts_snap(bool report, int64_t gap_us){
+  if(!ts_prev){ ts_prev=(TaskStatus_t*)gw_psram_calloc(sizeof(TaskStatus_t)*TS_MAX); ts_now=(TaskStatus_t*)gw_psram_calloc(sizeof(TaskStatus_t)*TS_MAX); if(!ts_prev||!ts_now) return; }
+  uint32_t tot=0; UBaseType_t n=uxTaskGetSystemState(ts_now,TS_MAX,&tot); if(!n) return;
+  if(report && ts_np && tot>ts_tot_prev){ uint32_t dt=tot-ts_tot_prev; char b[200]; int o=0;
+    for(int k=0;k<5;k++){ int bi=-1; uint32_t bd=0;
+      for(UBaseType_t i=0;i<n;i++){ uint32_t pv=0; bool f=false; for(UBaseType_t j=0;j<ts_np;j++) if(ts_prev[j].xHandle==ts_now[i].xHandle){ pv=ts_prev[j].ulRunTimeCounter; f=true; break; }
+        uint32_t d=ts_now[i].ulRunTimeCounter-(f?pv:0); if(d>bd){ bd=d; bi=i; } }
+      if(bi<0) break; o+=snprintf(b+o,sizeof b-o,"%s:%u%%/p%u ",ts_now[bi].pcTaskName,(unsigned)(bd*100ULL/dt/ (portNUM_PROCESSORS)),(unsigned)ts_now[bi].uxCurrentPriority);
+      ts_now[bi].ulRunTimeCounter-= bd;  // exclude from next pick (restored by the copy below being taken before)
+      if(o>=(int)sizeof b-24) break; }
+    ESP_LOGW("GW-STALL","cpu over %lldms: %s",gap_us/1000,b); }
+  // re-take so counters are exact for the next delta (the loop above modified ts_now)
+  n=uxTaskGetSystemState(ts_prev,TS_MAX,&ts_tot_prev); ts_np=n; }
+static void sec_cb(lv_timer_t*){ int64_t n=now_us();
+  if(sc_cb_last){ int64_t g=n-sc_cb_last; if(g>sc_cb_gap_max) sc_cb_gap_max=g; } sc_cb_last=n;
+  if(page!=GW_PAGE_FACE){ sc_last=0; sc_prev=-1; return; }
   struct timeval tv; gettimeofday(&tv,nullptr); struct tm t; time_t s=tv.tv_sec; localtime_r(&s,&t);
-  if(!gw_faces_sec(t.tm_sec)) return; int64_t n=now_us();
-  if(sc_last){ int64_t d=n-sc_last; sc_sum+=d; sc_n++; if(d>sc_max) sc_max=d; if(d<sc_min) sc_min=d; if(d>1100000) sc_late++;
-    if(sc_prev>=0 && t.tm_sec!=(sc_prev+1)%60) sc_skip++;
+  int64_t skew=(int64_t)tv.tv_sec*1000000+tv.tv_usec-n;
+  if(!gw_faces_sec(t.tm_sec)) return;
+  bool stall=false; int64_t d=0;
+  if(sc_last){ d=n-sc_last; sc_sum+=d; sc_n++; if(d>sc_max) sc_max=d; if(d<sc_min) sc_min=d; if(d>1100000){ sc_late++; stall=true; }
+    bool sk=sc_prev>=0 && t.tm_sec!=(sc_prev+1)%60; if(sk) sc_skip++;
+    if(stall||sk){ sc_stalls++;
+      ESP_LOGW("GW-STALL","#%u gap=%lldms ss %d->%d page=%d lvloop_max=%lldms clockstep=%lldms state=%d ble_rx=%llds_ago wifi=%d int=%u",
+        (unsigned)sc_stalls,d/1000,sc_prev,t.tm_sec,page,sc_cb_gap_max/1000,(skew-sc_skew0)/1000,(int)Application::GetInstance().GetDeviceState(),
+        gw_m.last_rx?(long long)((n-gw_m.last_rx)/1000000):-1LL,(int)WifiManager::GetInstance().IsConnected(),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
     if(sc_n>=60){ ESP_LOGW("GW-SEC","n=%u avg=%lldms min=%lldms max=%lldms late>1.1s=%u skipped=%u",(unsigned)sc_n,sc_sum/sc_n/1000,sc_min/1000,sc_max/1000,(unsigned)sc_late,(unsigned)sc_skip);
       sc_n=0; sc_sum=0; sc_max=0; sc_min=INT64_MAX; sc_late=0; sc_skip=0; } }
-  sc_last=n; sc_prev=t.tm_sec; }
+  ts_snap(stall,d);
+  sc_last=n; sc_prev=t.tm_sec; sc_skew0=skew; sc_cb_gap_max=0; }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
@@ -141,6 +172,10 @@ static void build_ui(){
   if(touch_indev){ lv_indev_set_long_press_time(touch_indev,GW_CHAT_MIN_PRESS_US/1000); lv_indev_add_event_cb(touch_indev,indev_cb,LV_EVENT_ALL,nullptr); }
   gw_standby_create(lv_layer_top());
   lv_timer_create(tick_cb,1000,nullptr); lv_timer_create(sec_cb,50,nullptr); built=true;
+  // 2.6.15: esp_lvgl_port runs taskLVGL at priority 1 (core 1) while audio_afe (wake word, prio 3, unpinned), opus (2),
+  // activation (2) and wifi compete for the same core -> LVGL starves for seconds. Run it at 3: time-sliced with the AFE,
+  // still below audio_output (4) and audio_input (8), so audio keeps priority.
+  { TaskHandle_t h=xTaskGetHandle("taskLVGL"); if(h){ vTaskPrioritySet(h,3); ESP_LOGW(TAG,"taskLVGL priority 1 -> 3"); } else ESP_LOGW(TAG,"taskLVGL not found"); }
   gw_faces_set_todo_cb([](int row){ GwTodoCheck(row); if(haptic) haptic(15); render(); });
   GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; if(page==GW_PAGE_TODO) render(); }); });
   { Settings s("gw",false); fps_log=s.GetInt("fpslog",0)!=0; }
