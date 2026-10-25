@@ -39,8 +39,10 @@ static float (*g_points)[48][2], (*g_from)[48][2], (*g_to)[48][2];   // PSRAM (2
 static void eyes_alloc(void){ if(!g_points){ g_points=gw_psram_calloc(GEYE_SZ); g_from=gw_psram_calloc(GEYE_SZ); g_to=gw_psram_calloc(GEYE_SZ); } }
 static void apply_skin(void);
 static void g_fade(lv_obj_t* o,uint32_t ms);
+static void g_show(lv_obj_t* o,bool on);
 #define GW_SUB_W 260   // subtitle width: inside the 466 px round screen's chord at the subtitle rows, 18 px margin
-static const char* const HINT[]={"长按说话","正在聆听…","思考中…","","离线"};
+// 2.6.24: no words on this page at all. State is carried by the face (listening lean + "o", thinking gaze + halo, speaking mouth).
+#define GFY 4    // face block centre offset: lit disc sits optically centred on the 466 round screen
 static lv_obj_t* rect(lv_obj_t* p,int w,int h,int r,uint32_t c){ lv_obj_t* o=lv_obj_create(p); lv_obj_remove_style_all(o); lv_obj_set_size(o,w,h);
   lv_obj_set_style_radius(o,r,0); lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0); lv_obj_set_style_bg_color(o,lv_color_hex(c),0);
   lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE); return o; }
@@ -133,15 +135,17 @@ static void draw_avatar(lv_event_t* event){
   if(g_st==0) arc_(L,ink,5,mx,my-6,11,25,155);                       // small smile
   else if(g_st==1) fill_rr(L,ink,LV_OPA_COVER,mx,my+1,13,11);          // little "o"
   else if(g_st==2) fill_rr(L,ink,LV_OPA_COVER,mx+8,my+2,14,5);       // small flat "hmm", off to the side
-  else if(g_st==3){ float t=wave(g_now,240), u=wave(g_now+70,390); int h=5+(int)(7*(t>0?t:-t)+4*(u>0?u:-u));
-    fill_rr(L,ink,LV_OPA_COVER,mx,my+2,20,h); }
+  else if(g_st==3){ float t=wave(g_now,240), u=wave(g_now+70,390); float ht=5+7*(t>0?t:-t)+4*(u>0?u:-u); static float mh=5; mh+=(ht-mh)*.45f;   // 2.6.24: eased, no frame-to-frame snaps
+    fill_rr(L,ink,LV_OPA_COVER,mx,my+2,20,(int)(mh+.5f)); }
   else arc_(L,ink,4,mx,my-4,8,30,150);                                 // asleep: tiny relaxed smile
 }
 // Redraw the 220x220 face only while something on it actually moves (device: ~70 ms per full face frame).
 static bool face_moving(void){ if(g_st==1||g_st==3) return true; if(g_now-g_morph_at<400) return true;
   uint32_t bk=g_now%4300; if(bk<200) return true; if(g_st==0){ uint32_t p=g_now%7000; if((p>2750&&p<3300)||(p>6250&&p<6800)) return true; } return false; }
 static bool g_was_moving=true;
+bool gw_slide_active(void);
 static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_OBJ_FLAG_HIDDEN)) return;
+  if(gw_slide_active()) return;   // 2.6.24: page bitmaps are sliding over us; do not redraw a face nobody sees
   g_now=lv_tick_get(); const gw_aora_cfg_t* cfg=&gw_aora_cfg[g_st];
   if(g_now-g_pool_at>=cfg->pool_ms){ g_pool_at=g_now; g_pool_pos=(g_pool_pos+1)%cfg->count; target_eye(false); }
   float f=(float)(g_now-g_morph_at)/cfg->transition_ms; if(f>1) f=1; f=f*f*(3-2*f);
@@ -150,11 +154,11 @@ static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_
   { bool mv=face_moving(); if(mv||g_was_moving) lv_obj_invalidate(g_avatar); g_was_moving=mv; } // avatar area only, and only while it moves
   if(g_st==1) for(int i=0;i<7;i++){
     int h=5+(int)((1+wave(g_now+i*67,400))*g_lvl*(4-abs(i-3))/40);
-    if(h>24) h=24; lv_obj_set_height(g_bar[i],h); lv_obj_align(g_bar[i],LV_ALIGN_CENTER,(i-3)*14,82);
+    if(h>24) h=24; lv_obj_set_height(g_bar[i],h); lv_obj_align(g_bar[i],LV_ALIGN_CENTER,(i-3)*14,GFY+136);
   }
   if(g_st==2) for(int i=0;i<3;i++){
     int a=(g_now/12+i*35)%360;
-    lv_obj_align(g_dot[i],LV_ALIGN_CENTER,(96*lv_trigo_cos(a))>>15,-104+((14*lv_trigo_sin(a))>>15));
+    lv_obj_align(g_dot[i],LV_ALIGN_CENTER,(96*lv_trigo_cos(a))>>15,GFY-128+((14*lv_trigo_sin(a))>>15));
   }
 }
 void gw_grok_create(lv_obj_t* parent){
@@ -170,7 +174,7 @@ void gw_grok_create(lv_obj_t* parent){
       g_mask_img.header.w=AV; g_mask_img.header.stride=AV; }
   }
   g_avatar=lv_obj_create(g_root); lv_obj_remove_style_all(g_avatar); lv_obj_set_size(g_avatar,220,220);
-  lv_obj_align(g_avatar,LV_ALIGN_CENTER,0,-40); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_align(g_avatar,LV_ALIGN_CENTER,3,GFY); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(g_avatar,draw_avatar,LV_EVENT_DRAW_MAIN,NULL);
   lv_obj_add_event_cb(g_root,g_finish,LV_EVENT_DRAW_MAIN_END,NULL);
   for(int i=0;i<7;i++){ g_bar[i]=rect(g_root,7,5,4,SKIN[0].accent); lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN); }
@@ -185,7 +189,8 @@ void gw_grok_create(lv_obj_t* parent){
   lv_obj_set_scroll_dir(g_sub,LV_DIR_VER); lv_obj_set_scrollbar_mode(g_sub,LV_SCROLLBAR_MODE_OFF); lv_obj_remove_flag(g_sub,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLL_ELASTIC);
   g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_width(g_reply,GW_SUB_W); lv_obj_set_style_text_line_space(g_reply,4,0);
   lv_label_set_long_mode(g_reply,LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(g_reply,LV_TEXT_ALIGN_CENTER,0);
-  lv_label_set_text(g_user,""); lv_label_set_text(g_reply,""); lv_label_set_text(g_stat,HINT[0]);
+  lv_label_set_text(g_user,""); lv_label_set_text(g_reply,""); lv_label_set_text(g_stat,"");
+  lv_obj_add_flag(g_user,LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(g_sub,LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(g_stat,LV_OBJ_FLAG_HIDDEN);   // 2.6.24: audio-only page
   apply_skin();
   lv_obj_add_flag(g_root,LV_OBJ_FLAG_HIDDEN);
   if(!g_tm) g_tm=lv_timer_create(tick,33,NULL); lv_timer_pause(g_tm);
@@ -195,32 +200,25 @@ void gw_grok_visible(bool on){ if(!g_root) return; on?lv_obj_remove_flag(g_root,
 void gw_grok_state(int st){ if(st<0||st>4) return;
   if(st!=g_st){ g_st=st; g_now=lv_tick_get(); g_pool_at=g_now; g_pool_pos=0; target_eye(false); }
   if(g_root){
-    for(int i=0;i<7;i++) st==1?lv_obj_remove_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN);
-    for(int i=0;i<3;i++) st==2?lv_obj_remove_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN):lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN);
-  }
-  if(g_user&&g_sub){ static bool sub_off=false; bool off=st==1;   // listening: level bars sit where the subtitles are -> fade subtitles out, back in after
-    if(off&&!sub_off){ lv_obj_set_style_opa(g_user,0,0); lv_obj_set_style_opa(g_sub,0,0); } else if(!off&&sub_off){ g_fade(g_user,180); g_fade(g_sub,180); } sub_off=off; }
-  if(g_stat&&strcmp(lv_label_get_text(g_stat),HINT[st])){ lv_label_set_text(g_stat,HINT[st]); if(HINT[st][0]) g_fade(g_stat,160); } }
+    for(int i=0;i<7;i++) g_show(g_bar[i],st==1);    // 2.6.24: 180 ms ease-out in, 140 ms out (no pop)
+    for(int i=0;i<3;i++) g_show(g_dot[i],st==2);
+  } }
 void gw_grok_level(int l){ g_lvl=l<0?0:(l>100?100:l); }
 // 2.6.12: g_stat holds the *theme* font directly (not the f20_rt copy), so it must be re-pointed when the theme
 // font is swapped, before the old one is freed (same UAF as 2.6.4; suspected cause of the 2.6.11 first-boot abort).
 void gw_grok_font_changed(const lv_font_t* f){ if(g_stat) lv_obj_set_style_text_font(g_stat,f?f:gw_f21(),0); }
-void gw_grok_status(const char* s){ if(g_stat&&s) lv_label_set_text(g_stat,s); }
+void gw_grok_status(const char* s){ (void)s; }   // 2.6.24: no status text
 static void gx_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
 static void g_fade(lv_obj_t* o,uint32_t ms){ lv_anim_delete(o,gx_opa); lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,o); lv_anim_set_exec_cb(&a,gx_opa);
   lv_anim_set_values(&a,60,LV_OPA_COVER); lv_anim_set_duration(&a,ms); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
-void gw_grok_text(const char* role,const char* t){ if(!g_root||!t) return;
-  bool user=role&&!strcmp(role,"user"); lv_obj_t* tgt=user?g_user:g_reply; bool changed=strcmp(lv_label_get_text(tgt),t)!=0;
-  if(role&&!strcmp(role,"user")){ lv_label_set_text(g_user,t); lv_label_set_text(g_reply,""); }
-  else lv_label_set_text(g_reply,t);
-  { const char* rt=lv_label_get_text(g_reply); const lv_font_t* f=lv_obj_get_style_text_font(g_reply,0); lv_point_t sz;
-    lv_text_get_size(&sz,rt,f,0,4,GW_SUB_W,LV_TEXT_FLAG_NONE); int lines=(sz.y+4)/(lv_font_get_line_height(f)+4), w=GW_SUB_W;
-    if(lines>1){ int lo=120, hi=GW_SUB_W; while(lo<hi){ int m=(lo+hi)/2; lv_text_get_size(&sz,rt,f,0,4,m,LV_TEXT_FLAG_NONE);
-        if((sz.y+4)/(lv_font_get_line_height(f)+4)>lines) lo=m+1; else hi=m; } w=lo+2>GW_SUB_W?GW_SUB_W:lo+2; }
-    lv_obj_set_width(g_reply,w); lv_obj_align(g_reply,LV_ALIGN_TOP_MID,0,0); }
-  lv_obj_update_layout(g_sub); lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF);
-  if(g_stat&&g_st==3) lv_label_set_text(g_stat,"");
-  if(changed&&t[0]) g_fade(user?g_user:g_sub,180); }   // new sentence: 180 ms ease-out fade-in (replaces, never stacks)   // while speaking only the subtitle shows status (no double text)
+static void g_hide_done(lv_anim_t* a){ lv_obj_add_flag((lv_obj_t*)a->var,LV_OBJ_FLAG_HIDDEN); }
+static void g_show(lv_obj_t* o,bool on){ bool vis=!lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN);
+  if(on){ if(vis&&!lv_anim_get(o,gx_opa)) return; lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN); lv_anim_delete(o,gx_opa); lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,o);
+    lv_anim_set_exec_cb(&a,gx_opa); lv_anim_set_values(&a,lv_obj_get_style_opa(o,0)<LV_OPA_COVER?lv_obj_get_style_opa(o,0):0,LV_OPA_COVER); lv_anim_set_duration(&a,180); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
+  else { if(!vis) return; lv_anim_delete(o,gx_opa); lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,o); lv_anim_set_exec_cb(&a,gx_opa);
+    lv_anim_set_values(&a,lv_obj_get_style_opa(o,0),0); lv_anim_set_duration(&a,140); lv_anim_set_path_cb(&a,lv_anim_path_ease_in); lv_anim_set_completed_cb(&a,g_hide_done); lv_anim_start(&a); } }
+// 2.6.24: replies are spoken only; the page shows no subtitles. Kept as a no-op so the board API is unchanged.
+void gw_grok_text(const char* role,const char* t){ (void)role; (void)t; }
 static void apply_skin(void){ if(!g_root) return;
   lv_obj_set_style_bg_color(g_root,lv_color_hex(SK->bg),0);
   for(int i=0;i<7;i++) lv_obj_set_style_bg_color(g_bar[i],lv_color_hex(SK->accent),0);

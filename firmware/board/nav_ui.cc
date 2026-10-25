@@ -20,6 +20,7 @@
 #include "gw_todo_net.h"
 #include "gw_input.h"
 #include "gw_sbsm.h"
+#include "gw_slide.h"
 #define TAG "NavUI"
 #define GW_RX_LOG 1  // log type/len of each incoming frame (no content)
 extern "C" bool gw_ble_link(void);
@@ -31,13 +32,13 @@ static int64_t now_us(){ return esp_timer_get_time(); }
 static bool linked(){ return gw_model_linked(gw_ble_link(), now_us()); }
 static void buzz(int ms){ if(haptic && !dnd) haptic(ms); }
 static void buzz2(){ if(!haptic || dnd) return; haptic(70); lv_timer_create([](lv_timer_t* t){ if(haptic) haptic(70); lv_timer_delete(t); },180,nullptr); }
-static int64_t page_us=0, wake_us=0; static gw_anim_gov_t gov; static bool gov_init=false; static uint32_t fr_total=0;
+static int64_t page_us=0, wake_us=0; static uint32_t fr_total=0;
 static bool touch_log=false; static lv_indev_t* touch_indev=nullptr; static int64_t down_us=0; static lv_point_t down_pt={0,0};
-static void slide_measure(){ if(!gov_init){ gw_anim_gov_init(&gov); gov_init=true; } if(!gov.slide_on) return;
-  struct M{ uint32_t f0; int64_t t0; }; M* m=new M{fr_total,now_us()};
-  lv_timer_t* t=lv_timer_create([](lv_timer_t* t){ M* m=(M*)lv_timer_get_user_data(t); gw_anim_gov_slide_done(&gov,(int)(fr_total-m->f0),now_us()-m->t0);
-    if(!gov.slide_on){ gw_faces_set_slide(false); ESP_LOGW(TAG,"slides %d fps < 30 twice: switching pages directly",gov.last_fps);} delete m; lv_timer_delete(t); },GW_SLIDE_MS,m); (void)t; }
-static void go(int p,int d){ page=(p%NPAGES+NPAGES)%NPAGES; page_us=now_us(); slide_measure(); gw_faces_dir(d); if(haptic) haptic(18); if(page==GW_PAGE_TODO) GwTodoFetch(); render(); }
+static void slide_begin_stats();   // 2.6.24 (frame split below)
+// 2.6.24: snapshot slide. Old screen -> PSRAM bitmap, new page rendered -> second bitmap, then only the two bitmaps move.
+// Replaces the fps governor that switched pages without any motion after two slow slides.
+static void go(int p,int d){ bool sl=built && gw_slide_snap_old(); page=(p%NPAGES+NPAGES)%NPAGES; page_us=now_us(); gw_faces_dir(d); if(haptic) haptic(18);
+  if(page==GW_PAGE_TODO) GwTodoFetch(); render(); if(sl && gw_slide_start(d)) slide_begin_stats(); }
 
 // ---- Control Center ----
 static gw_cc_t cc;
@@ -69,6 +70,32 @@ static bool fps_log=false;
 static void frame_start_cb(lv_event_t*){ fr_start=now_us(); }
 static uint16_t fr_ring[128]; // last 128 frame render+flush times, 0.1 ms units (console "stat")
 static void frame_cb(lv_event_t*){ nfr++; fr_total++; if(fr_start){ int64_t d=now_us()-fr_start; fr_sum+=d; if(d>fr_max) fr_max=d; fr_ring[fr_total&127]=(uint16_t)(d>6553500?65535:d/100); } }
+// ---- 2.6.24 per-frame split (passive, serial only). total = REFR_START..READY; wait = LVGL blocked on the QSPI DMA
+// (FLUSH_WAIT); cb = flush_cb incl. byte swap; render = total-wait-cb. Bus rate is measured from strips LVGL had to wait
+// for (wait end - that strip's flush start), so xfer = bytes / measured rate.
+struct FrAgg{ uint32_t n; int64_t tot,ren,wait,cb,maxtot; uint64_t bytes; };
+static FrAgg agg_all, agg_slide; static bool in_slide=false, land_pending=false; static int64_t slide_t0, slide_end;
+static int64_t ff_t0, ff_fs, ff_fs_last, ff_wt0, ff_wait, ff_cbt; static uint32_t ff_bytes, ff_last_bytes; static double ff_rate=0;
+static int bench_left=0; static FrAgg agg_bench;
+static void agg_add(FrAgg* x,int64_t tot){ x->n++; x->tot+=tot; x->wait+=ff_wait; x->cb+=ff_cbt; x->ren+=tot-ff_wait-ff_cbt; x->bytes+=ff_bytes; if(tot>x->maxtot) x->maxtot=tot; }
+static double xfer_ms(double bytes){ return ff_rate>0?bytes/ff_rate/1000.0:0; }
+static void ff_print(const char* tag,const FrAgg& g,const char* extra){ if(!g.n) return; double n=g.n;
+  ESP_LOGW(tag,"%s frames=%u avg total=%.1fms render=%.1fms flushcb=%.1fms dma-wait=%.1fms max=%.1fms px=%.0fkB/f bus=%.1fMB/s xfer~%.1fms/f",
+    extra,(unsigned)g.n,g.tot/n/1e3,g.ren/n/1e3,g.cb/n/1e3,g.wait/n/1e3,g.maxtot/1e3,g.bytes/n/1024.0,ff_rate,xfer_ms(g.bytes/n)); }
+static void ff_ev(lv_event_t* e){ int64_t t=now_us(); auto c=lv_event_get_code(e);
+  if(c==LV_EVENT_REFR_START){ ff_t0=t; ff_wait=ff_cbt=0; ff_bytes=0; ff_fs_last=0; }
+  else if(c==LV_EVENT_FLUSH_START){ auto a=(const lv_area_t*)lv_event_get_param(e); ff_fs=t; uint32_t b=a?(uint32_t)lv_area_get_size(a)*2:0; ff_bytes+=b; ff_last_bytes=b; }
+  else if(c==LV_EVENT_FLUSH_FINISH){ ff_cbt+=t-ff_fs; ff_fs_last=ff_fs; }
+  else if(c==LV_EVENT_FLUSH_WAIT_START) ff_wt0=t;
+  else if(c==LV_EVENT_FLUSH_WAIT_FINISH){ int64_t w=t-ff_wt0; ff_wait+=w;
+    if(w>300 && ff_fs_last && ff_last_bytes>=8000){ double r=(double)ff_last_bytes/(double)(t-ff_fs_last); ff_rate=ff_rate>0?ff_rate*0.9+r*0.1:r; } }
+  else if(c==LV_EVENT_REFR_READY && ff_bytes){ int64_t tot=t-ff_t0; agg_add(&agg_all,tot); if(in_slide) agg_add(&agg_slide,tot);
+    if(land_pending){ land_pending=false; ESP_LOGW("GW-SLIDE","landing frame (real page redraw) total=%.1fms px=%ukB",tot/1e3,(unsigned)(ff_bytes/1024)); }
+    if(bench_left>0){ agg_add(&agg_bench,tot); if(--bench_left==0) ff_print("GW-BENCH",agg_bench,"full-screen redraw x3:"); else lv_obj_invalidate(lv_screen_active()); } } }
+static void slide_done(){ int64_t dur=now_us()-slide_t0; in_slide=false; land_pending=true; char ex[120];
+  snprintf(ex,sizeof ex,"page slide %dms fps=%.1f snap_old=%.1fms snap_new=%.1fms |",(int)(dur/1000),agg_slide.n*1e6/(double)(dur>0?dur:1),
+    gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3); ff_print("GW-SLIDE",agg_slide,ex); }
+static void slide_begin_stats(){ agg_slide={}; in_slide=true; slide_t0=now_us(); }
 static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   if(fps_log && nfr>3) ESP_LOGW(TAG,"fps=%d frame avg %.1f ms max %.1f ms (%d frames / %.0f ms)",(int)(nfr*1e6/(t-fr_t0)),fr_sum/1e3/nfr,fr_max/1e3,nfr,(t-fr_t0)/1e3);
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }
@@ -154,6 +181,7 @@ static void pf_timer(lv_timer_t* tm){ int64_t now=esp_timer_get_time(); uint32_t
     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
     (unsigned)m.free_size,(unsigned)m.total_size,(unsigned)m.frag_pct,secs>0?pf_frames/secs:0.f,pf_max_us/1000.f);
+  ff_print("GW-FRAME",agg_all,"all frames since last line:"); agg_all={};
   pf_frames=0; pf_max_us=0; pf_last_print=now; if(up>=180) lv_timer_set_period(tm,60000); }
 // 2.6.14: second hand poll (50 ms, wall clock) + passive GW-SEC interval stats (serial log only, every 60 moves)
 // 2.6.15: passive stall diagnostics. On any move gap > 1.1 s print one GW-STALL line: page, longest LVGL loop gap
@@ -221,7 +249,9 @@ static void build_ui(){
   GwTodoSetDoneCb([](){ Application::GetInstance().Schedule([](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; if(page==GW_PAGE_TODO) render(); }); });
   { Settings s("gw",false); fps_log=s.GetInt("fpslog",0)!=0; }
   lv_display_add_event_cb(lv_display_get_default(),frame_start_cb,LV_EVENT_REFR_START,nullptr);
-  lv_display_add_event_cb(lv_display_get_default(),frame_cb,LV_EVENT_REFR_READY,nullptr); lv_timer_create(fps_cb,2000,nullptr); fr_t0=now_us();
+  lv_display_add_event_cb(lv_display_get_default(),frame_cb,LV_EVENT_REFR_READY,nullptr);
+  lv_display_add_event_cb(lv_display_get_default(),ff_ev,LV_EVENT_ALL,nullptr); gw_faces_set_slide(false); gw_slide_set_done_cb(slide_done);
+  lv_timer_create([](lv_timer_t* t){ agg_bench={}; bench_left=3; lv_obj_invalidate(lv_screen_active()); lv_timer_delete(t); },45000,nullptr);   // one passive full-screen redraw benchmark (same pixels) lv_timer_create(fps_cb,2000,nullptr); fr_t0=now_us();
 }
 static void render(){
   if(!built) build_ui();
@@ -275,7 +305,7 @@ void NavUiGoPage(int p){ sched([p](){ go(p, p>=page?1:-1); }); }
 int  NavUiPage(){ return page; }
 void NavUiTouchLog(bool on){ touch_log=on; }
 void NavUiFpsLog(bool on){ fps_log=on; }
-bool NavUiSlideOn(){ return !gov_init || gov.slide_on; }
+bool NavUiSlideOn(){ return true; }   // 2.6.24: snapshot slide always on (governor removed)
 // last n frames (n<=128): min/avg/max frame time in 0.1 ms; returns frames counted so far
 uint32_t NavUiFrameStats(int n,int* mn,int* av,int* mx){ if(n>128) n=128; if((uint32_t)n>fr_total) n=(int)fr_total; int a=0,lo=1<<30,hi=0;
   for(int i=0;i<n;i++){ int v=fr_ring[(fr_total-i)&127]; a+=v; if(v<lo) lo=v; if(v>hi) hi=v; } *mn=n?lo:0; *mx=hi; *av=n?a/n:0; return fr_total; }

@@ -17,7 +17,7 @@
 #define LV_USE_ARC 1
 #define LV_USE_FLEX 1
 #define LV_USE_LOG 0
-#define LV_USE_SNAPSHOT 0
+#define LV_USE_SNAPSHOT 1
 #define LV_USE_THEME_DEFAULT 1
 #define LV_THEME_DEFAULT_DARK 1
 #endif

@@ -2,6 +2,7 @@
 // 466x466 round mask, scripted touch gestures through a real LVGL pointer indev, and real TLV frames into gw_model.
 #include "lvgl.h"
 #include "gw_faces.h"
+#include "gw_slide.h"
 #include "cbin_font.h"
 #ifndef GW_FONT_BIN
 #error "build with sim/build.sh (defines GW_FONT_BIN)"
@@ -63,7 +64,8 @@ static void render(void){ time_t t0=time(NULL); struct tm t; localtime_r(&t0,&t)
   s.speed=gw_m.speed; s.ride_min=gw_model_ride_min(now_us());
   s.n_todo=td_n; s.todo_open=td_open; s.todo_state=td_state; for(int i=0;i<td_n;i++){ s.todo_text[i]=td_text[i]; s.todo_done[i]=td_done[i]; }
   gw_faces_show(page,&s); }
-static void go(int p,int dd){ page=(p+GW_NCORE)%GW_NCORE; gw_faces_dir(dd); render(); }
+static int sim_slide=0; static double snap_ms=0;
+static void go(int p,int dd){ double a=now_ms(); bool sl=sim_slide&&gw_slide_snap_old(); page=(p+GW_NCORE)%GW_NCORE; gw_faces_dir(dd); render(); if(sl) gw_slide_start(dd); snap_ms=now_ms()-a; }
 static void cc_fill(void){ cc.battery=76; cc.wifi=true; cc.ble=gw_model_linked(true,now_us()); cc.phone_batt=gw_m.phone_batt; cc.night=night; cc.dnd=dnd; }
 static void cc_tap(int id){ if(id==GW_CC_BRIGHT) cc.bright=cc.bright>=100?30:(cc.bright>=60?100:60); if(id==GW_CC_VOLUME) cc.volume=cc.volume>=90?0:(cc.volume>=60?90:(cc.volume>=30?60:30));
   if(id==GW_CC_NIGHT){ night=!night; gw_faces_set_night(night); gw_faces_create(lv_screen_active()); render(); } if(id==GW_CC_DND) dnd=!dnd; cc_fill(); gw_cc_open(&cc,cc_tap); }
@@ -108,6 +110,26 @@ static void speed(float k){ int v=(int)(k*10); uint8_t p[2]={v&255,v>>8}; rx(0x2
 static void nav_on(int on){ uint8_t p[1]={on}; rx(0x10,p,1); }
 static void icon_left(void){ uint8_t ic[288]={0}; for(int y=0;y<48;y++)for(int x=0;x<48;x++){ int on=0; if(x>=28&&x<36&&y>=18&&y<44) on=1; if(y>=14&&y<22&&x>=14&&x<36) on=1; if(x>=4&&x<18&&abs(y-18)<=(x-4)) on=1;
     if(on) ic[(y*48+x)/8]|=0x80>>((y*48+x)%8);} for(int part=0;part<3;part++){ uint8_t p[97]; p[0]=part; memcpy(p+1,ic+96*part,96); rx(0x12,p,97);} }
+// ---- 2.6.24: snapshot slide frames + GrokBot page (day / night) -> a24_* files
+static void slide_gif(const char* tag,int to,int dd){ gif_n=0; gf_px=gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
+  go(to,dd); double sm=snap_ms; int fr=0; while(gw_slide_active()&&fr<40){ step(30); gif_frame(tag); fr++; } step(30); gif_frame(tag);
+  char nm[64]; snprintf(nm,sizeof nm,"slide %s (snapshot both + build %.1f ms host)",tag,sm); perf(nm);
+  printf("SLIDE %s frames=%d slide_active_after=%d page_x=%d\n",tag,fr,gw_slide_active(),gw_faces_page_x()); }
+static void after24(void){ char nm[64]; gw_faces_set_slide(false); sim_slide=1;
+  for(int n=0;n<2;n++){ const char* D=n?"night":"day"; night=n; gw_faces_set_night(n); gw_faces_create(lv_screen_active()); gw_grok_set_night(n);
+    gw_grok_variant(2); page=1; render(); step(400);
+    snprintf(nm,sizeof nm,"a24_%s_face",D); shot(nm);
+    snprintf(nm,sizeof nm,"a24slide_%s_face_ride",D); slide_gif(nm,2,1);
+    snprintf(nm,sizeof nm,"a24slide_%s_ride_face",D); slide_gif(nm,1,-1);
+    snprintf(nm,sizeof nm,"a24slide_%s_face_grok",D); slide_gif(nm,0,-1);
+    static const char* SN[]={"idle","listening","thinking","speaking","offline"};
+    for(int st=0;st<5;st++){ gw_grok_state(st); gw_grok_level(70); gw_grok_text("assistant","这段字幕不应出现"); step(st==1?400:300);
+      snprintf(nm,sizeof nm,"a24_%s_grok_%s",D,SN[st]); shot(nm); }
+    gif_n=0; gw_grok_state(0); step(100); gw_grok_state(1); for(int i=0;i<12;i++){ step(30); snprintf(nm,sizeof nm,"a24st_%s",D); gif_frame(nm); }
+    gw_grok_state(2); for(int i=0;i<12;i++){ step(30); gif_frame(nm); } gw_grok_state(3); for(int i=0;i<24;i++){ step(30); gif_frame(nm); }
+    gw_grok_state(0); for(int i=0;i<10;i++){ step(30); gif_frame(nm); }
+    snprintf(nm,sizeof nm,"a24slide_%s_grok_face",D); slide_gif(nm,1,1); }
+  night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); gw_grok_set_night(false); sim_slide=0; }
 int main(int argc,char**argv){
   OUT=argv[1]; lv_init(); lv_tick_set_cb(tk);
   d=lv_display_create(W,W); static uint8_t buf[W*W*2]; lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_DIRECT); lv_display_set_flush_cb(d,flush);
@@ -257,4 +279,4 @@ int main(int argc,char**argv){
   gw_standby_set(1,23,0); shot("standby_glyphs_0123"); gw_standby_set(45,67,0); shot("standby_glyphs_4567"); gw_standby_set(89,0,0); shot("standby_glyphs_8900"); gw_standby_show(false);
   { int cnt=0; lv_obj_t* st[4096]; int sp=0; st[sp++]=lv_screen_active(); st[sp++]=lv_layer_top(); while(sp){ lv_obj_t* o=st[--sp]; cnt++; for(uint32_t k=0;k<lv_obj_get_child_count(o);k++) st[sp++]=lv_obj_get_child(o,k);} printf("PERF lvgl objects total: %d\n",cnt); }
   lv_mem_monitor_t m; lv_mem_monitor(&m); printf("PERF lvgl heap used: %u B of %u, peak %u B, frag %u%%\n",(unsigned)(m.total_size-m.free_size),(unsigned)m.total_size,(unsigned)m.max_used,(unsigned)m.frag_pct);
-  printf("AUDIT missing glyphs: %d\n",missing_total); return 0; }
+  after24(); printf("AUDIT missing glyphs: %d\n",missing_total); return 0; }

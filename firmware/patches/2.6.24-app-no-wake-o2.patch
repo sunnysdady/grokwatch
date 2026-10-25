@@ -1,0 +1,56 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3b9df7e..1d9899a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,9 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.5.3")
++set(PROJECT_VER "2.6.24")
+ project(xiaozhi)
++# GrokWatch 2.6.24: the renderer is the bottleneck (docs/hardware.md) -> build LVGL at -O2;
++# the rest of the app stays -Os (flash size, no behaviour change elsewhere).
++idf_component_get_property(gw_lvgl_lib lvgl__lvgl COMPONENT_LIB)
++target_compile_options(${gw_lvgl_lib} PRIVATE -O2)
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index 358a094..221aeda 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -664,6 +664,9 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopWakeWordPacket() {
+ 
+ void AudioService::EnableWakeWordDetection(bool enable) {
+     ESP_LOGD(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
++#if CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++    enable = false;   // GrokWatch 2.6.24: no always-on listening; the mic opens only for a button-started session
++#endif
+     if (enable) {
+         if (!InitializeAudioEngine()) {
+             xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
+index e245876..3027889 100644
+--- a/main/audio/engines/afe_audio_engine.cc
++++ b/main/audio/engines/afe_audio_engine.cc
+@@ -15,7 +15,10 @@
+ 
+ #define TAG "AfeAudioEngine"
+ 
+-#if CONFIG_USE_AUDIO_PROCESSOR
++#if CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++// GrokWatch 2.6.24: no wake word, no AFE. Raw mic only while the button-started session listens.
++static constexpr bool kUseAfeForVoiceProcessing = false;
++#elif CONFIG_USE_AUDIO_PROCESSOR
+ static constexpr bool kUseAfeForVoiceProcessing = true;
+ #else
+ static constexpr bool kUseAfeForVoiceProcessing = false;
+@@ -79,6 +82,10 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
+             ESP_LOGI(TAG, "Model %d: %s", i, models_->model_name[i]);
+         }
+     }
++#if CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++    wakenet_model_name = nullptr;   // GrokWatch 2.6.24: wake words removed (assets models ignored)
++    multinet_model_name = nullptr;
++#endif
+ 
+     if (multinet_model_name != nullptr) {
+         wake_detector_ = WakeDetector::kMultiNet;

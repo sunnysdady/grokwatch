@@ -7,7 +7,8 @@ pngs=sorted(glob.glob(f'{O}/[0-9]*.png')); cols=4; t=233
 rows=(len(pngs)+cols-1)//cols; sheet=Image.new('RGB',(cols*(t+10)+10,rows*(t+10)+10),(18,18,18))
 for i,p in enumerate(pngs): sheet.paste(Image.open(p).resize((t,t),Image.LANCZOS),(10+(i%cols)*(t+10),10+(i//cols)*(t+10)))
 sheet.save(f'{O}/contact_sheet.png')
-for tag in ['listening','thinking','pages','sb_enter','sb_exit']:
+import re
+for tag in ['listening','thinking','pages','sb_enter','sb_exit']+sorted({re.sub(r'_\d+\.ppm$','',os.path.basename(x))[4:] for x in glob.glob(f'{O}/gif_a24*.ppm')}):
     fr=sorted(glob.glob(f'{O}/gif_{tag}_*.ppm'))
     if not fr: continue
     ims=[Image.open(x).resize((300,300),Image.LANCZOS).convert('P',palette=Image.ADAPTIVE) for x in fr]
