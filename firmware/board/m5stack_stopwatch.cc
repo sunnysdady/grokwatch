@@ -358,7 +358,7 @@ private:
         // the results once, and also accept the PMIC "was pressed" flag as a click fallback.
         { int e1 = pmic_.setSingleResetDisable(true), e2 = pmic_.setDoubleOffDisable(true);
           int e3 = pmic_.irqSetBtnMask(M5PM1_IRQ_BTN_CLICK, M5PM1_IRQ_MASK_DISABLE);
-          int e4 = pmic_.irqSetBtnMask(M5PM1_IRQ_BTN_DOUBLE, M5PM1_IRQ_MASK_DISABLE);
+          int e4 = pmic_.irqSetBtnMask(M5PM1_IRQ_BTN_DOUBLE, M5PM1_IRQ_MASK_DISABLE); pmic_.irqSetBtnMask(M5PM1_IRQ_BTN_WAKE, M5PM1_IRQ_MASK_DISABLE);
           uint8_t st0 = 0; pmic_.irqGetBtnStatus(&st0, M5PM1_CLEAN_ALL); bool f0 = false; pmic_.btnGetFlag(&f0);
           ESP_LOGW("GW-KEY", "red(PMIC) init: rst_dis=%d off_dis=%d unmask_click=%d unmask_double=%d (0=ok) stale=0x%02x", e1, e2, e3, e4, st0); }
         esp_timer_create_args_t pa = {};
@@ -370,6 +370,9 @@ private:
             if (st) { irq_ok = true; b->pmic_.btnGetFlag(&fl); }          // consume the press flag of the same press
             else if (!irq_ok && b->pmic_.btnGetFlag(&fl) == M5PM1_OK && fl) st = M5PM1_IRQ_BTN_CLICK | 0x80;   // IRQ never seen: press flag = click
             if (!st) return;
+            // 2.6.21: on this PMIC a short press of the red key raises BTN_WAKE (0x02), not BTN_CLICK (0x01) — seen on
+            // serial as "red raw=0x02". Treat WAKE as a single click unless the same read also reports a double.
+            if ((st & M5PM1_IRQ_BTN_WAKE) && !(st & M5PM1_IRQ_BTN_DOUBLE)) st |= M5PM1_IRQ_BTN_CLICK;
             ESP_LOGW("GW-KEY", "red raw=0x%02x -> %s%s", st, (st & M5PM1_IRQ_BTN_DOUBLE) ? "double" : (st & M5PM1_IRQ_BTN_CLICK) ? "click" : "other", (st & 0x80) ? " (flag)" : "");
             Application::GetInstance().Schedule([b, st]() {
                 (void)b;
