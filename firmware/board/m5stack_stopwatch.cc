@@ -93,10 +93,18 @@ public:
         DisplayLockGuard lock(this);
         gw_grok_state(st);
     }
+    static bool IsWakeWordHint(const char* c) {
+        const char* t = Lang::Strings::WAKE_WORD_HINT; const char* ph = strstr(t, "%s"); if (!ph) return false;
+        size_t pre = ph - t; const char* suf = ph + 2; size_t n = strlen(c), ns = strlen(suf);
+        return n >= pre + ns && !strncmp(c, t, pre) && !strcmp(c + n - ns, suf);
+    }
     void SetChatMessage(const char* role, const char* content) override {
         // Never call the stock SetChatMessage: it re-shows bottom_bar_ (the dark bar with a second, larger copy of the
         // text seen on 2.6.7) and allocates chat bubbles nobody sees. gw_grok is the only subtitle renderer.
         if (!role || !content || (strcmp(role, "user") && strcmp(role, "assistant"))) return;
+        // 2.6.13: drop the stock startup hint "说「你好小智」就能唤醒我。" (Lang::Strings::WAKE_WORD_HINT). GrokBot never calls
+        // itself 小智; the idle status line already says 长按说话. Matches the template text around %s, not the wake word.
+        if (!strcmp(role, "assistant") && IsWakeWordHint(content)) { ESP_LOGW("gw", "startup wake-word hint suppressed"); return; }
         DisplayLockGuard lock(this);
         gw_grok_text(role, content);
         if (!strcmp(role, "user") && content[0]) gw_grok_state(2);   // question heard -> thinking until speech starts

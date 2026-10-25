@@ -64,3 +64,7 @@
 - GW-PERF (nav_ui.cc): passive ESP_LOGW every 10 s, every 60 s after 3 min: internal free/min, PSRAM free/min,
   LVGL pool free/total/frag, fps and slowest frame from LV_EVENT_REFR_START/READY. No console command.
 - Sim: 130/130 screenshots pixel-identical to 2.6.12b.
+
+## 2.6.13 — 2026-10-25
+- m5stack_stopwatch.cc: suppress upstream startup wake-word hint (说「你好小智」就能唤醒我。) on the GrokBot page. No other change;
+  UI sources used by the simulator are untouched (sim output identical by construction). See XIAOZHI-STRINGS-2.6.13.md.
