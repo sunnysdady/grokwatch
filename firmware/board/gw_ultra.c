@@ -32,9 +32,8 @@ const lv_font_t* gw_f_status(void){ gw_f20(); return f20_rt.fallback?f20_rt.fall
 #define I_WX   "\xEF\x87\x97"
 #define I_MAIL "\xEF\x83\xA0"
 #define I_TEL  "\xEF\x82\x95"
-// palette (watchOS dark): pure black, international orange accent
-// HomeView theme: one deep-teal surface, white hero, mint accent (K_ORG keeps its name, now mint).
-enum { K_BG=0x213F3B, K_TXT=0xF4F6F2, K_SEC=0xB4C8C0, K_TER=0x55716C, K_CARD=0x2C4E49, K_CARD2=0x3A5C57, K_ORG=0xE8EFC4, K_GRN=0x30D158, K_RED=0xFF453A, K_CYAN=0x64D2FF, K_BLUE=0x0A84FF, K_YEL=0xFFD60A };
+// palette (watchOS dark): pure black, no frame -- content meets the round glass on its own. Neutral greys, mint accent (K_ORG keeps its name).
+enum { K_BG=0x000000, K_TXT=0xF4F6F2, K_SEC=0xAEAEB2, K_TER=0x636366, K_CARD=0x1C1C1E, K_CARD2=0x2C2C2E, K_ORG=0xE8EFC4, K_GRN=0x30D158, K_RED=0xFF453A, K_CYAN=0x64D2FF, K_BLUE=0x0A84FF, K_YEL=0xFFD60A };
 // Apple system colours (dark appearance), used only where watchOS / Apple Home colour a function: second hand, CC icons and on-states.
 enum { A_ORANGE=0xFF9F0A, A_YELLOW=0xFFD60A, A_PINK=0xFF375F, A_INDIGO=0x5E5CE6 };
 static bool is_accent(uint32_t h){ return h==A_ORANGE||h==A_YELLOW||h==A_PINK||h==A_INDIGO; }
@@ -42,7 +41,7 @@ static bool night=false, fade=true;
 // Night: like iPhone StandBy at night -- not red. Low-saturation warm white at ~55 % level; accents keep a hint of hue.
 static lv_color_t col(uint32_t h){ if(!night) return lv_color_hex(h);
   if(is_accent(h)) return lv_color_make(((h>>16)&255)*52/100,((h>>8)&255)*52/100,(h&255)*52/100); // night: dim to 52 %, keep hue
-  if(h==K_BG) return lv_color_hex(0x100D0A); if(h==K_CARD) return lv_color_hex(0x1C1814); if(h==K_CARD2) return lv_color_hex(0x28221C);
+  if(h==K_BG) return lv_color_hex(0x000000); if(h==K_CARD) return lv_color_hex(0x1C1814); if(h==K_CARD2) return lv_color_hex(0x28221C);
   int r=(h>>16)&255,g=(h>>8)&255,b=h&255; int l=(r*77+g*150+b*29)>>8;
   int R=(r*3+l*7)/10, G=(g*3+l*7)/10, B=(b*3+l*7)/10;            // 70 % desaturate
   return lv_color_make(R*64/100, G*57/100, B*49/100); }           // dim + slightly warm white
@@ -93,8 +92,8 @@ static void bezel(lv_obj_t* p,int mode,bool dim){
   else { lv_scale_set_total_tick_count(s,mode==2?72:60); lv_scale_set_major_tick_every(s,mode==2?18:5); lv_scale_set_angle_range(s,mode==2?355:354); lv_scale_set_rotation(s,270);
     lv_scale_set_text_src(s,mode==2?L_CMP:L_MIN); }
   lv_scale_set_label_show(s,false);
-  lv_obj_set_style_length(s,8,LV_PART_ITEMS); lv_obj_set_style_line_width(s,2,LV_PART_ITEMS); lv_obj_set_style_line_color(s,col(dim?K_CARD2:0x5F7A75),LV_PART_ITEMS);
-  lv_obj_set_style_length(s,16,LV_PART_INDICATOR); lv_obj_set_style_line_width(s,3,LV_PART_INDICATOR); lv_obj_set_style_line_color(s,col(dim?K_TER:0xB7C6C0),LV_PART_INDICATOR);
+  lv_obj_set_style_length(s,8,LV_PART_ITEMS); lv_obj_set_style_line_width(s,2,LV_PART_ITEMS); lv_obj_set_style_line_color(s,col(dim?K_CARD2:0x5A5A5E),LV_PART_ITEMS);
+  lv_obj_set_style_length(s,16,LV_PART_INDICATOR); lv_obj_set_style_line_width(s,3,LV_PART_INDICATOR); lv_obj_set_style_line_color(s,col(dim?K_TER:0xC7C7CC),LV_PART_INDICATOR);
   lv_obj_set_style_arc_width(s,0,LV_PART_MAIN); lv_obj_set_style_bg_opa(s,LV_OPA_TRANSP,0); lv_obj_set_style_border_width(s,0,0);
   lv_obj_set_style_text_font(s,&gu_lab,LV_PART_INDICATOR); lv_obj_set_style_text_color(s,col(K_SEC),LV_PART_INDICATOR); lv_obj_set_style_pad_radial(s,8,LV_PART_INDICATOR);
   lv_obj_remove_flag(s,LV_OBJ_FLAG_CLICKABLE);
@@ -124,7 +123,6 @@ static void seg_inval(int cx,int cy,int deg,int len,int pad){ for(int k=0;k<8;k+
 static void hands_inval(void){ if(!f_hands||f_hh<0) return; lv_area_t c; lv_obj_get_coords(f_hands,&c); int cx=(c.x1+c.x2)/2, cy=(c.y1+c.y2)/2;
   seg_inval(cx,cy,((f_hh%12)*60+f_mm)/2,118,6); seg_inval(cx,cy,f_mm*6,196,5);
   lv_area_t hub={cx-8,cy-8,cx+8,cy+8}; lv_obj_invalidate_area(f_hands,&hub); }
-int gw_finish_on=1;
 static void ax_sec(void* o,int32_t v){ (void)o; sec_inval(f_sa); f_sa=s_from+v*s_span*0.001f; if(f_sa>=360.f) f_sa-=360.f; sec_inval(f_sa); }
 #define V_USCALE 144  /* 144/256 = 0.56 = mockup 54/96 */
 static void nav_layout(void){ lv_obj_update_layout(v_dist); lv_obj_update_layout(v_unit);
@@ -144,40 +142,6 @@ static void hands_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_a
   r.bg_color=col(A_ORANGE); lv_area_t h3={cx-5,cy-5,cx+5,cy+5}; lv_draw_rect(L,&r,&h3);
   r.bg_color=col(K_BG); lv_area_t h2={cx-2,cy-2,cx+2,cy+2}; lv_draw_rect(L,&r,&h2); }
 
-// 2.6.14 dial finish: what the promo boards add around the screen, done inside the 466 px glass with no bitmaps.
-// Edge vignette (6 dark rings) + hairline inner ring + soft top-left light catch. Pure LVGL arcs: 0 B heap, drawn under
-// the page content only where an invalid area reaches r>=200 px (second hand tip stops at 200, so ticks never pay for it).
-// 2.6.15: the 2.6.14 version drew ~15 full-circle arcs per redraw strip -> full-screen redraws went from ~0.2 s to ~0.9 s
-// on device and froze the second hand at every minute change. Now the same finish (with a true smooth vignette) is
-// computed once per day/night into an ARGB8888 image in PSRAM (868 KB, 0 B internal) and blitted, clipped to the strip.
-#include "gw_mem.h"
-static uint8_t* fin_px; static int fin_night=-1; static lv_image_dsc_t fin_dsc;
-static void fin_build(bool nt){ if(!fin_px){ fin_px=(uint8_t*)gw_psram_calloc(466*466*4); if(!fin_px) return; }
-  float lr=nt?0xC9:255, lg=nt?0xC2:255, lb=nt?0xB4:255;            // light-catch colour
-  float hr=nt?0x8A:0xCF, hg=nt?0x7E:0xE3, hb=nt?0x6E:0xDC;          // hairline colour
-  for(int y=0;y<466;y++) for(int x=0;x<466;x++){ uint8_t* q=fin_px+(y*466+x)*4; float dx=x+.5f-233.f, dy=y+.5f-233.f, r=sqrtf(dx*dx+dy*dy);
-    if(r<210.f||r>233.5f){ q[0]=q[1]=q[2]=q[3]=0; continue; }
-    float t=(r-212.f)/21.f; t=t<0?0:(t>1?1:t); float av=0.36f*t*t;                       // vignette, black, up to 36 %
-    float wh=1.f-fabsf(r-228.f); wh=wh<0?0:wh; float ah=(nt?0.086f:0.133f)*wh;            // 1 px hairline
-    float w2=1.f-fabsf(r-226.5f)/1.6f; w2=w2<0?0:w2; float ang=atan2f(dy,dx)*57.29578f; if(ang<0) ang+=360.f;
-    float da=(ang-225.f)/30.f; float al=(nt?0.14f:0.28f)*w2*expf(-da*da);                  // light catch at 10:30
-    float cr=0,cg=0,cb=0,ca=av;                                                            // composite: black, then hairline, then light
-    float A=ah; cr=hr*A+cr*(1-A)*0; cg=hg*A; cb=hb*A; ca=A+ca*(1-A);
-    float B=al; cr=lr*B+cr*(1-B); cg=lg*B+cg*(1-B); cb=lb*B+cb*(1-B); ca=B+ca*(1-B);
-    if(ca<=0.002f){ q[0]=q[1]=q[2]=q[3]=0; continue; }
-    q[2]=(uint8_t)(cr/ca>255?255:cr/ca); q[1]=(uint8_t)(cg/ca>255?255:cg/ca); q[0]=(uint8_t)(cb/ca>255?255:cb/ca); q[3]=(uint8_t)(ca*255.f+.5f); }
-  memset(&fin_dsc,0,sizeof fin_dsc); fin_dsc.header.magic=LV_IMAGE_HEADER_MAGIC; fin_dsc.header.cf=LV_COLOR_FORMAT_ARGB8888;
-  fin_dsc.header.w=466; fin_dsc.header.h=466; fin_dsc.header.stride=466*4; fin_dsc.data_size=466*466*4; fin_dsc.data=fin_px;
-  fin_night=nt; }
-void gw_dial_finish(lv_layer_t* L,const lv_area_t* a,bool nt){
-  if(fin_night!=(int)nt) fin_build(nt); if(!fin_px) return;
-  lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d); d.src=&fin_dsc; lv_area_t c={a->x1+(a->x2-a->x1+1-466)/2,a->y1+(a->y2-a->y1+1-466)/2,0,0};
-  c.x2=c.x1+465; c.y2=c.y1+465; lv_draw_image(L,&d,&c); }
-static void finish_cb(lv_event_t* e){ lv_area_t a; lv_obj_get_coords(lv_event_get_target_obj(e),&a);
-  const lv_area_t* clip=&lv_event_get_layer(e)->_clip_area; int cx=(a.x1+a.x2)/2, cy=(a.y1+a.y2)/2;
-  // skip when the invalid area sits fully inside r<200 (e.g. the second hand / hub)
-  int dx=LV_MAX(LV_ABS(clip->x1-cx),LV_ABS(clip->x2-cx)), dy=LV_MAX(LV_ABS(clip->y1-cy),LV_ABS(clip->y2-cy));
-  if(!gw_finish_on||dx*dx+dy*dy<200*200) return; gw_dial_finish(lv_event_get_layer(e),&a,night); }
 static lv_obj_t* pill(lv_obj_t* p,int w,int h,int x,int y){ lv_obj_t* c=lv_obj_create(p); lv_obj_remove_style_all(c); lv_obj_set_size(c,w,h);
   lv_obj_set_style_radius(c,h/2>36?36:h/2,0); lv_obj_set_style_bg_opa(c,LV_OPA_COVER,0); lv_obj_set_style_bg_color(c,col(K_CARD),0);
   lv_obj_set_style_border_width(c,1,0); lv_obj_set_style_border_color(c,col(K_CARD2),0); lv_obj_set_style_border_opa(c,140,0);  // 2.6.14: hairline edge = glass card
@@ -278,7 +242,6 @@ void gw_faces_create(lv_obj_t* parent){
   chat=box(parent); lv_obj_move_to_index(chat,1);
   c_time=label(chat,&gu_sm,K_ORG,0,-192); lv_obj_set_style_text_letter_space(c_time,1,0);  // -192: clear of the Grok status line (-152)
   root=box(parent); lv_obj_set_style_bg_color(root,col(K_BG),0); lv_obj_set_style_radius(root,LV_RADIUS_CIRCLE,0); lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
-  lv_obj_add_event_cb(root,finish_cb,LV_EVENT_DRAW_MAIN_END,NULL);
   for(int i=1;i<GW_NPAGES;i++){ pg[i]=box(root); lv_obj_add_flag(pg[i],LV_OBJ_FLAG_HIDDEN); }
   // ---- FACE: Wayfinder bezel + bold numerals + 3 circular complications
   lv_obj_t* p=pg[GW_PAGE_FACE]; bezel(p,0,false);

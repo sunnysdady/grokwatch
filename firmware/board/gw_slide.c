@@ -30,7 +30,7 @@ static void ax(void* var,int32_t v){ (void)var; if(!ov) return;   // v: 0..1000 
   int x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
   lv_obj_set_x(im_new,x_new); lv_obj_set_x(im_old,x_old); }
 static void anim_done(lv_anim_t* a){ (void)a; finish(); }
-static int s_style=2;   // 0 = legacy compose (two disc "coins"), 1 = cover (56 ms/frame on device), 2 = push under a fixed rim (default)
+static int s_style=2;   // 0 = legacy compose (two disc "coins"), 1 = cover (56 ms/frame on device), 2 = push (default)
 static int64_t pre_us;   // when the old page was snapped at touch-down (0 = none)
 bool gw_slide_snap_old(void){ if(ov) finish(); int64_t n=us();
   if(have_old&&pre_us&&n-pre_us<1500000){ pre_us=0; snap_us[0]=0; return true; }   // snapped at touch-down: the swipe pays nothing
@@ -75,7 +75,7 @@ static uint16_t s_bg;
 static uint16_t pick_bg(void){ const uint16_t* n=(const uint16_t*)m_new; uint16_t c[32]; int best=0,bc=0;   // the page's own fill: majority colour on a ring well inside the rim
   for(int i=0;i<32;i++){ float a=i*0.19635f; c[i]=n[(int)(W/2+196*sinf(a))*W+(int)(W/2+196*cosf(a))]; }
   for(int i=0;i<32;i++){ int k=0; for(int j=0;j<32;j++) k+=c[j]==c[i]; if(k>bc){ bc=k; best=i; } } return c[best]; }
-#define PUSH_R 214   // source disc radius: inside each page's own darker rim, so no ring travels with the page
+#define PUSH_R 233   // source disc = the whole glass: pages are frameless on black, so nothing is held back as a fixed rim
 static int16_t s_in[W];   // source chord start per row (W/2 = row outside the source disc)
 // copy source chord [sl,sh] shifted by xs, clipped to the screen chord [lo,hi]
 static void span(uint8_t* d,const uint8_t* src,int xs,int sl,int sh,int lo,int hi){ if(sh<sl) return; int a=xs+sl, b=xs+sh+1; if(a<lo) a=lo; if(b>hi+1) b=hi+1; if(b>a) memcpy(d+a*2,src+(size_t)(a-xs)*2,(size_t)(b-a)*2); }

@@ -30,7 +30,6 @@ void gw_faces_create(lv_obj_t* parent);
 int  gw_faces_sec(int ss);
 void gw_faces_set_sec_hook(void (*h)(int));  // 2.6.17: called on every second-hand move (both paths)
 void gw_standby_set_tap(void (*cb)(void));   // 2.6.17: tap on the standby clock -> wake           // 2.6.14: wall-clock second tick (call every ~50 ms)
-void gw_dial_finish(lv_layer_t* L,const lv_area_t* a,bool night); // 2.6.14 edge vignette + inner ring + light catch
 void gw_faces_set_fallback(const lv_font_t* f); // full CJK font for characters outside the built-in set
 void gw_faces_show(int page, const gw_state_t* st);
 #define GW_SLIDE_PX 140

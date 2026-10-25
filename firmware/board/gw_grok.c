@@ -15,18 +15,13 @@
 const lv_font_t* gw_f20(void); const lv_font_t* gw_f21(void); const lv_font_t* gw_f_status(void);
 #define F20 gw_f20()
 #define F21 gw_f21()
-// Original GrokWatch character skin (not the upstream emotion-ball visual): teal page, mint body built
+// Original GrokWatch character skin (not the upstream emotion-ball visual): black page, mint body built
 // from two flat tonal discs (shade + face) for depth without RGB565 gradient bands. Night = dimmed warm white.
 typedef struct { uint32_t bg, shade, body, off_shade, off_body, ink, accent, sec, reply; } gw_skin_t;
 static const gw_skin_t SKIN[2]={
-  {0x213F3B,0x86C7B1,0xC6EBDC,0x6F9488,0x93B3A9,0x14302B,0x8FE3C8,0x9DB8B0,0xF4F6F2},   // day
-  {0x100D0A,0x4F6E64,0x7E9F93,0x3E4F49,0x56685F,0x0C1311,0x9DB8AC,0x7C8A84,0xC9C2B4}}; // night: dimmed mint body, warm-white text
+  {0x000000,0x86C7B1,0xC6EBDC,0x6F9488,0x93B3A9,0x14302B,0x8FE3C8,0x9DB8B0,0xF4F6F2},   // day
+  {0x000000,0x4F6E64,0x7E9F93,0x3E4F49,0x56685F,0x0C1311,0x9DB8AC,0x7C8A84,0xC9C2B4}}; // night: dimmed mint body, warm-white text
 static bool g_night;
-void gw_dial_finish(lv_layer_t* L,const lv_area_t* a,bool night);
-static void g_finish(lv_event_t* e){ lv_area_t a; lv_obj_get_coords(lv_event_get_target_obj(e),&a);
-  const lv_area_t* c=&lv_event_get_layer(e)->_clip_area; int cx=(a.x1+a.x2)/2, cy=(a.y1+a.y2)/2;
-  int dx=LV_MAX(LV_ABS(c->x1-cx),LV_ABS(c->x2-cx)), dy=LV_MAX(LV_ABS(c->y1-cy),LV_ABS(c->y2-cy));
-  if(dx*dx+dy*dy>=200*200) gw_dial_finish(lv_event_get_layer(e),&a,g_night); }
 #define SK (&SKIN[g_night?1:0])
 static lv_obj_t *g_root,*g_avatar,*g_bar[7],*g_dot[3],*g_stat,*g_sub,*g_user,*g_reply;
 static int g_st=0, g_lvl=0;
@@ -176,7 +171,6 @@ void gw_grok_create(lv_obj_t* parent){
   g_avatar=lv_obj_create(g_root); lv_obj_remove_style_all(g_avatar); lv_obj_set_size(g_avatar,220,220);
   lv_obj_align(g_avatar,LV_ALIGN_CENTER,3,GFY); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(g_avatar,draw_avatar,LV_EVENT_DRAW_MAIN,NULL);
-  lv_obj_add_event_cb(g_root,g_finish,LV_EVENT_DRAW_MAIN_END,NULL);
   for(int i=0;i<7;i++){ g_bar[i]=rect(g_root,7,5,4,SKIN[0].accent); lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN); }
   for(int i=0;i<3;i++){ g_dot[i]=rect(g_root,7,7,4,i==0?0x9A72EE:(i==1?0x5B95F0:0x35C3BD)); lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN); }
   g_stat=lv_label_create(g_root); lv_obj_set_style_text_font(g_stat,gw_f_status(),0); lv_obj_set_style_text_color(g_stat,lv_color_hex(SKIN[0].accent),0); lv_obj_align(g_stat,LV_ALIGN_CENTER,0,-152);
