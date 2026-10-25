@@ -31,8 +31,9 @@ static void ax(void* var,int32_t v){ (void)var; if(!ov) return;   // v: 0..1000 
 static void anim_done(lv_anim_t* a){ (void)a; finish(); }
 bool gw_slide_snap_old(void){ if(ov) finish(); have_old=false; if(!bufs()) return false;
   have_old=snap(&sb_old,m_old,&snap_us[0]); return have_old; }
-static const gw_slide_hw_t* hw; static int st_frames, st_ms, st_max_us;
+static const gw_slide_hw_t* hw; static int st_frames, st_ms, st_max_us, st_comp_ms, st_wait_ms;
 void gw_slide_set_hw(const gw_slide_hw_t* h){ hw=h; }
+void gw_slide_last_split(int* comp_ms,int* wait_ms){ if(comp_ms)*comp_ms=st_comp_ms; if(wait_ms)*wait_ms=st_wait_ms; }
 void gw_slide_last_stats(int* f,int* ms,int* mx){ if(f)*f=st_frames; if(ms)*ms=st_ms; if(mx)*mx=st_max_us; }
 // screen x in [a,b) shows old[x-x_old]; outside the old bitmap it is black (RGB565 0)
 static void seg(uint8_t* d,const uint8_t* oo,int a,int b,int x_old){ if(b<=a) return;
@@ -64,15 +65,15 @@ static void compose_style(uint8_t* dst,int y0,int n,float q){
     if(nr>nl){ memcpy(d+nl*2,m_new+o+(size_t)(nl-xn)*2,(size_t)(nr-nl)*2);
       uint16_t* p=(uint16_t*)d; for(int k=0;k<SHADOW;k++){ int x=s_dir>0?nl-1-k:nr+k; if(x<0||x>=W) break; p[x]=dim(p[x],32-(SHADOW-k)*14/SHADOW); } } } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
-static void run_direct(void){ int64_t t0=hnow(), tf=t0; int fr=0, mx=0, i=0; hw->wait();
+static void run_direct(void){ int64_t t0=hnow(), tf=t0, tc=0, tw=0; int fr=0, mx=0, i=0; hw->wait();
   for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out jumped 126 px in frame 1 and crawled in the last 4 (reads as a pop)
     int v=(int)(q*1000+0.5f), x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
     for(int y=0;y<W;y+=hw->rows,i++){ int n=W-y<hw->rows?W-y:hw->rows; uint8_t* b=hw->buf(i&1);
-      if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old); hw->wait(); hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
+      int64_t a=hnow(); if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old); int64_t c=hnow(); hw->wait(); tc+=c-a; tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
     if(hw->frame_done) hw->frame_done();
     int64_t t=hnow(); int fm=(int)(t-tf); if(fm>mx) mx=fm; tf=t; fr++;
     if(last) break; }
-  hw->wait(); st_frames=fr; st_ms=(int)((hnow()-t0)/1000); st_max_us=mx; }
+  hw->wait(); st_comp_ms=(int)(tc/1000); st_wait_ms=(int)(tw/1000); st_frames=fr; st_ms=(int)((hnow()-t0)/1000); st_max_us=mx; }
 bool gw_slide_start(int dir){ if(!have_old) return false; have_old=false; s_dir=dir<0?-1:1;
   if(!snap(&sb_new,m_new,&snap_us[1])) return false;
   if(hw){ run_direct(); if(done_cb) done_cb(); return true; }

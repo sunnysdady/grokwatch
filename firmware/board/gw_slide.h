@@ -24,6 +24,7 @@ typedef struct {
 } gw_slide_hw_t;
 void gw_slide_set_hw(const gw_slide_hw_t* hw);
 void gw_slide_last_stats(int* frames,int* ms,int* max_frame_us);   // direct mode: last slide
+void gw_slide_last_split(int* compose_ms,int* wait_ms);   // direct mode: time composing vs waiting for the bus
 void gw_slide_set_style(int s);   // 0 legacy disc cards, 1 cover (default)
 void gw_slide_cancel(void);       // jump to the end (real page shows)
 void gw_slide_set_done_cb(void (*cb)(void));

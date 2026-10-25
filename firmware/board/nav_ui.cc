@@ -7,6 +7,7 @@
 #include <functional>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_memory_utils.h>
 #include <lvgl.h>
 #include <wifi_manager.h>
 #include "board.h"
@@ -95,8 +96,8 @@ static void ff_ev(lv_event_t* e){ int64_t t=now_us(); auto c=lv_event_get_code(e
     if(bench_left>0){ agg_add(&agg_bench,tot); if(--bench_left==0) ff_print("GW-BENCH",agg_bench,"full-screen redraw x3:"); else lv_obj_invalidate(lv_screen_active()); } } }
 static bool sl_hw_on=false;
 static void slide_done(){ int64_t dur=now_us()-slide_t0; in_slide=false; land_pending=true; char ex[160];
-  if(sl_hw_on){ int f,ms,mx; gw_slide_last_stats(&f,&ms,&mx);
-    ESP_LOGW("GW-SLIDE","page slide DIRECT %dms frames=%d fps=%.1f max_frame=%.1fms | snap_old=%.1fms snap_new=%.1fms | total_with_snaps=%dms",ms,f,f*1e3/(ms>0?ms:1),mx/1e3,
+  if(sl_hw_on){ int f,ms,mx,cm,wm; gw_slide_last_stats(&f,&ms,&mx); gw_slide_last_split(&cm,&wm);
+    ESP_LOGW("GW-SLIDE","page slide DIRECT %dms frames=%d fps=%.1f max_frame=%.1fms compose=%dms bus-wait=%dms | snap_old=%.1fms snap_new=%.1fms | total_with_snaps=%dms",ms,f,f*1e3/(ms>0?ms:1),mx/1e3,cm,wm,
       gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3,(int)(dur/1000)); return; }
   snprintf(ex,sizeof ex,"page slide %dms fps=%.1f snap_old=%.1fms snap_new=%.1fms |",(int)(dur/1000),agg_slide.n*1e6/(double)(dur>0?dur:1),
     gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3); ff_print("GW-SLIDE",agg_slide,ex); }
@@ -112,7 +113,7 @@ static void sl_push(int y0,int n,uint8_t* b){ lv_display_t* d=sl_d(); lv_area_t 
 static gw_slide_hw_t sl_hw={0,sl_buf,sl_push,sl_wait,nullptr,nullptr};
 static void slide_hw_init(){ lv_display_t* d=sl_d(); if(!d||!d->buf_1||!d->buf_2||!d->flush_cb) return;
   int rows=(int)(d->buf_1->data_size/(GW_SLIDE_W*2)); if((size_t)rows*GW_SLIDE_W*2>d->buf_2->data_size) rows=(int)(d->buf_2->data_size/(GW_SLIDE_W*2));
-  rows&=~1; if(rows>=8){ sl_hw.rows=rows; gw_slide_set_hw(&sl_hw); sl_hw_on=true; ESP_LOGW("GW-SLIDE","direct push on: %d rows/strip, 2 buffers",rows); } }
+  rows&=~1; if(rows>=8){ sl_hw.rows=rows; gw_slide_set_hw(&sl_hw); sl_hw_on=true; ESP_LOGW("GW-SLIDE","direct push on: %d rows/strip, 2 buffers, internal=%d/%d",rows,(int)esp_ptr_internal(d->buf_1->data),(int)esp_ptr_internal(d->buf_2->data)); } }
 static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   if(fps_log && nfr>3) ESP_LOGW(TAG,"fps=%d frame avg %.1f ms max %.1f ms (%d frames / %.0f ms)",(int)(nfr*1e6/(t-fr_t0)),fr_sum/1e3/nfr,fr_max/1e3,nfr,(t-fr_t0)/1e3);
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }
