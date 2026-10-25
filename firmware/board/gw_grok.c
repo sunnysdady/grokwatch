@@ -20,7 +20,7 @@ const lv_font_t* gw_f20(void); const lv_font_t* gw_f21(void); const lv_font_t* g
 typedef struct { uint32_t bg, shade, body, off_shade, off_body, ink, accent, sec, reply; } gw_skin_t;
 static const gw_skin_t SKIN[2]={
   {0x213F3B,0x86C7B1,0xC6EBDC,0x6F9488,0x93B3A9,0x14302B,0x8FE3C8,0x9DB8B0,0xF4F6F2},   // day
-  {0x100D0A,0x5E5446,0x9C8C76,0x4A4238,0x6E6253,0x100D0A,0xB8A68C,0x7A6E60,0xC9BBA5}}; // night
+  {0x100D0A,0x4F6E64,0x7E9F93,0x3E4F49,0x56685F,0x0C1311,0x9DB8AC,0x7C8A84,0xC9C2B4}}; // night: dimmed mint body, warm-white text
 static bool g_night;
 #define SK (&SKIN[g_night?1:0])
 static lv_obj_t *g_root,*g_avatar,*g_bar[7],*g_dot[3],*g_stat,*g_sub,*g_user,*g_reply;
@@ -92,13 +92,13 @@ static void draw_avatar(lv_event_t* event){
   lv_area_t b; lv_obj_get_coords(g_avatar,&b);
   bool off=g_st==4;
   float lean=g_st==1?3.f:0;                                  // listening: lean in a touch
-  float bob=g_st==3?1.6f*wave(g_now,1400):(off?2.f*wave(g_now,4200):0);
+  float bob=g_st==3?1.6f*wave(g_now,1400):0;
   int cx=b.x1+110, cy=b.y1+110+(int)(lean+bob);
-  int R=(int)(98*(1.0f+.008f*wave(g_now,3600))+(g_st==1?2:0));
+  int R=98+(g_st==1?2:0);
   lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.radius=LV_RADIUS_CIRCLE; d.bg_opa=LV_OPA_COVER;
   d.bg_color=lv_color_hex(off?SK->off_shade:SK->shade); lv_area_t body={cx-R,cy-R,cx+R,cy+R}; lv_draw_rect(L,&d,&body);
   d.bg_color=lv_color_hex(off?SK->off_body:SK->body); lv_area_t face={cx-R+2,cy-R+1,cx+R-8,cy+R-9}; lv_draw_rect(L,&d,&face);
-  lv_color_t ink=lv_color_hex(SK->ink), hi=lv_color_hex(g_night?0xD9CBB4:0xFFFFFF);
+  lv_color_t ink=lv_color_hex(SK->ink), hi=lv_color_hex(g_night?0xBFD3CB:0xFFFFFF);
   int fx=cx-3, fy=cy-5;                                      // optical centre of the lit face disc
   // gaze
   float gx=0, gy=0;
@@ -109,7 +109,7 @@ static void draw_avatar(lv_event_t* event){
   int sep=g_var==1?32:35, ey=fy-6;
   uint32_t bk=g_now%4300; float open=bk<70?1-bk/70.f:(bk<160?(bk-70)/90.f:1); if(open<.12f) open=.12f;
   if(g_st==2) open=open<.85f?open:.85f;
-  if(g_var==2&&!off){ lv_color_t blush=lv_color_mix(lv_color_hex(0xF4A9A0),lv_color_hex(SK->body),g_night?70:110);
+  if(g_var==2&&!off&&!g_night){ lv_color_t blush=lv_color_mix(lv_color_hex(0xF4A9A0),lv_color_hex(SK->body),g_night?70:110);
     fill_rr(L,blush,LV_OPA_COVER,fx-sep-20,ey+30,26,14); fill_rr(L,blush,LV_OPA_COVER,fx+sep+20,ey+30,26,14); }
   for(int k=-1;k<=1;k+=2){ int ex=fx+k*sep+(int)gx, eyy=ey+(int)gy;
     if(off){ arc_(L,ink,6,ex,eyy-6,11,20,160); continue; }   // asleep: soft closed lids
@@ -124,20 +124,24 @@ static void draw_avatar(lv_event_t* event){
     fill_rr(L,ink,LV_OPA_COVER,mx,my+2,20,h); }
   else arc_(L,ink,4,mx,my-4,8,30,150);                                 // asleep: tiny relaxed smile
 }
+// Redraw the 220x220 face only while something on it actually moves (device: ~70 ms per full face frame).
+static bool face_moving(void){ if(g_st==1||g_st==3) return true; if(g_now-g_morph_at<400) return true;
+  uint32_t bk=g_now%4300; if(bk<200) return true; if(g_st==0){ uint32_t p=g_now%7000; if((p>2750&&p<3300)||(p>6250&&p<6800)) return true; } return false; }
+static bool g_was_moving=true;
 static void tick(lv_timer_t* t){ (void)t; if(!g_root||lv_obj_has_flag(g_root,LV_OBJ_FLAG_HIDDEN)) return;
   g_now=lv_tick_get(); const gw_aora_cfg_t* cfg=&gw_aora_cfg[g_st];
   if(g_now-g_pool_at>=cfg->pool_ms){ g_pool_at=g_now; g_pool_pos=(g_pool_pos+1)%cfg->count; target_eye(false); }
   float f=(float)(g_now-g_morph_at)/cfg->transition_ms; if(f>1) f=1; f=f*f*(3-2*f);
   for(int e=0;e<2;e++) for(int i=0;i<48;i++) for(int xy=0;xy<2;xy++)
     g_points[e][i][xy]=g_from[e][i][xy]+(g_to[e][i][xy]-g_from[e][i][xy])*f;
-  lv_obj_invalidate(g_avatar); // Only the avatar's 220x220 area, never the screen.
+  { bool mv=face_moving(); if(mv||g_was_moving) lv_obj_invalidate(g_avatar); g_was_moving=mv; } // avatar area only, and only while it moves
   if(g_st==1) for(int i=0;i<7;i++){
     int h=5+(int)((1+wave(g_now+i*67,400))*g_lvl*(4-abs(i-3))/40);
-    if(h>24) h=24; lv_obj_set_height(g_bar[i],h); lv_obj_align(g_bar[i],LV_ALIGN_CENTER,(i-3)*14,98);
+    if(h>24) h=24; lv_obj_set_height(g_bar[i],h); lv_obj_align(g_bar[i],LV_ALIGN_CENTER,(i-3)*14,82);
   }
   if(g_st==2) for(int i=0;i<3;i++){
     int a=(g_now/12+i*35)%360;
-    lv_obj_align(g_dot[i],LV_ALIGN_CENTER,(96*lv_trigo_cos(a))>>15,-86+((14*lv_trigo_sin(a))>>15));
+    lv_obj_align(g_dot[i],LV_ALIGN_CENTER,(96*lv_trigo_cos(a))>>15,-104+((14*lv_trigo_sin(a))>>15));
   }
 }
 void gw_grok_create(lv_obj_t* parent){
@@ -153,7 +157,7 @@ void gw_grok_create(lv_obj_t* parent){
       g_mask_img.header.w=AV; g_mask_img.header.stride=AV; }
   }
   g_avatar=lv_obj_create(g_root); lv_obj_remove_style_all(g_avatar); lv_obj_set_size(g_avatar,220,220);
-  lv_obj_align(g_avatar,LV_ALIGN_CENTER,0,-22); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_align(g_avatar,LV_ALIGN_CENTER,0,-40); lv_obj_remove_flag(g_avatar,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(g_avatar,draw_avatar,LV_EVENT_DRAW_MAIN,NULL);
   for(int i=0;i<7;i++){ g_bar[i]=rect(g_root,7,5,4,SKIN[0].accent); lv_obj_add_flag(g_bar[i],LV_OBJ_FLAG_HIDDEN); }
   for(int i=0;i<3;i++){ g_dot[i]=rect(g_root,7,7,4,i==0?0x9A72EE:(i==1?0x5B95F0:0x35C3BD)); lv_obj_add_flag(g_dot[i],LV_OBJ_FLAG_HIDDEN); }
@@ -161,11 +165,11 @@ void gw_grok_create(lv_obj_t* parent){
   // Subtitles: the question is one fixed line (ellipsis); the reply lives in its own 2-line window below it and
   // scrolls so the newest text shows. A long reply can never climb over the question or the character.
   int lh=lv_font_get_line_height(F20);
-  g_user=lv_label_create(g_root); lv_obj_set_style_text_font(g_user,F20,0); lv_obj_set_width(g_user,300); lv_obj_set_height(g_user,lh);
-  lv_label_set_long_mode(g_user,LV_LABEL_LONG_DOT); lv_obj_set_style_text_align(g_user,LV_TEXT_ALIGN_CENTER,0); lv_obj_align(g_user,LV_ALIGN_CENTER,0,116);
-  g_sub=lv_obj_create(g_root); lv_obj_remove_style_all(g_sub); lv_obj_set_size(g_sub,284,lh*2+4); lv_obj_align_to(g_sub,g_user,LV_ALIGN_OUT_BOTTOM_MID,0,4);
+  g_user=lv_label_create(g_root); lv_obj_set_style_text_font(g_user,F20,0); lv_obj_set_width(g_user,270); lv_obj_set_style_text_opa(g_user,200,0); lv_obj_set_height(g_user,lh);
+  lv_label_set_long_mode(g_user,LV_LABEL_LONG_DOT); lv_obj_set_style_text_align(g_user,LV_TEXT_ALIGN_CENTER,0); lv_obj_align(g_user,LV_ALIGN_CENTER,0,92);
+  g_sub=lv_obj_create(g_root); lv_obj_remove_style_all(g_sub); lv_obj_set_size(g_sub,284,lh*2+8); lv_obj_align_to(g_sub,g_user,LV_ALIGN_OUT_BOTTOM_MID,0,8);
   lv_obj_set_scroll_dir(g_sub,LV_DIR_VER); lv_obj_set_scrollbar_mode(g_sub,LV_SCROLLBAR_MODE_OFF); lv_obj_remove_flag(g_sub,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLL_ELASTIC);
-  g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_width(g_reply,284);
+  g_reply=lv_label_create(g_sub); lv_obj_set_style_text_font(g_reply,F20,0); lv_obj_set_width(g_reply,284); lv_obj_set_style_text_line_space(g_reply,4,0);
   lv_label_set_long_mode(g_reply,LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(g_reply,LV_TEXT_ALIGN_CENTER,0);
   lv_label_set_text(g_user,""); lv_label_set_text(g_reply,""); lv_label_set_text(g_stat,HINT[0]);
   apply_skin();
@@ -186,6 +190,11 @@ void gw_grok_status(const char* s){ if(g_stat&&s) lv_label_set_text(g_stat,s); }
 void gw_grok_text(const char* role,const char* t){ if(!g_root||!t) return;
   if(role&&!strcmp(role,"user")){ lv_label_set_text(g_user,t); lv_label_set_text(g_reply,""); }
   else lv_label_set_text(g_reply,t);
+  { const char* rt=lv_label_get_text(g_reply); const lv_font_t* f=lv_obj_get_style_text_font(g_reply,0); lv_point_t sz;
+    lv_text_get_size(&sz,rt,f,0,4,284,LV_TEXT_FLAG_NONE); int lines=(sz.y+4)/(lv_font_get_line_height(f)+4), w=284;
+    if(lines>1){ int lo=120, hi=284; while(lo<hi){ int m=(lo+hi)/2; lv_text_get_size(&sz,rt,f,0,4,m,LV_TEXT_FLAG_NONE);
+        if((sz.y+4)/(lv_font_get_line_height(f)+4)>lines) lo=m+1; else hi=m; } w=lo+2; }
+    lv_obj_set_width(g_reply,w); lv_obj_align(g_reply,LV_ALIGN_TOP_MID,0,0); }
   lv_obj_update_layout(g_sub); lv_obj_scroll_to_y(g_sub,LV_COORD_MAX,LV_ANIM_OFF); }
 static void apply_skin(void){ if(!g_root) return;
   lv_obj_set_style_bg_color(g_root,lv_color_hex(SK->bg),0);

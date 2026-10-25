@@ -6,7 +6,7 @@
 #include <string.h>
 #include <math.h>
 LV_FONT_DECLARE(gu_hero) LV_FONT_DECLARE(gu_num) LV_FONT_DECLARE(gu_sm) LV_FONT_DECLARE(gu_lab) LV_FONT_DECLARE(gu_icon) LV_FONT_DECLARE(gz_20)
-LV_FONT_DECLARE(gn_hero) LV_FONT_DECLARE(gn_dist) LV_FONT_DECLARE(gn_unit) LV_FONT_DECLARE(gn_mid) LV_FONT_DECLARE(gn_lab)  // Nunito, HomeView mockup faces
+LV_FONT_DECLARE(gn_hero) LV_FONT_DECLARE(gn_dist) LV_FONT_DECLARE(gn_unit) LV_FONT_DECLARE(gn_mid) LV_FONT_DECLARE(gn_lab) LV_FONT_DECLARE(gn_hour)  // Nunito, HomeView mockup faces
 // RAM copies of the compact CJK fonts so a runtime fallback (full CJK font) can cover rare characters
 static lv_font_t f20_rt, f21_rt; static bool f_init=false;
 const lv_font_t* gw_f20(void){ if(!f_init){ f20_rt=gz_20; f21_rt=gz_20; /* size: gz_21b (408 KB) dropped, see docs/BUILD.md */ f_init=true; } return &f20_rt; }
@@ -17,6 +17,7 @@ const lv_font_t* gw_f_status(void){ gw_f20(); return f20_rt.fallback?f20_rt.fall
 #define F21 gw_f21()
 #define I_WIFI "\xEF\x87\xAB"
 #define I_BT   "\xEF\x8A\x94"
+#define I_NAV  "\xEF\x84\xA4"
 #define I_BELL "\xEF\x83\xB3"
 #define I_BOLT "\xEF\x83\xA7"
 #define I_BIKE "\xEF\x88\x86"
@@ -167,8 +168,8 @@ void gw_faces_create(lv_obj_t* parent){
   f_g[0]=gauge(p,-100,100,K_GRN,&f_gv[0]); f_g[1]=gauge(p,0,112,K_ORG,&f_gv[1]); f_g[2]=gauge(p,100,100,K_CYAN,&f_gv[2]);
   f_glink2=arc(p,84,7,K_CARD2,K_BLUE); lv_obj_align(f_glink2,LV_ALIGN_CENTER,100,100); lv_obj_set_style_arc_opa(f_glink2,LV_OPA_TRANSP,LV_PART_MAIN);
   { lv_obj_t* hid[]={f_time,f_g[0],f_g[1],f_g[2],f_gv[0],f_gv[1],f_gv[2],f_glink2}; for(int i=0;i<8;i++) lv_obj_add_flag(hid[i],LV_OBJ_FLAG_HIDDEN); } // digital Ultra face retired
-  for(int i=1;i<=12;i++){ bool q=i%3==0; char nb[4]; snprintf(nb,sizeof nb,"%d",i);   // gu_sm covers 0x20-0x7E: every digit present
-    lv_obj_t* n=label(p,&gn_mid,q?K_TXT:K_SEC,(178*lv_trigo_sin(i*30))>>15,-((178*lv_trigo_cos(i*30))>>15)); lv_label_set_text(n,nb); }
+  for(int i=3;i<=12;i+=3){ bool q=true; char nb[4]; snprintf(nb,sizeof nb,"%d",i);   // gu_sm covers 0x20-0x7E: every digit present
+    int rr=i==6?166:176; lv_obj_t* n=label(p,&gn_hour,q?K_TXT:K_SEC,(rr*lv_trigo_sin(i*30))>>15,-((rr*lv_trigo_cos(i*30))>>15)); lv_label_set_text(n,nb); }
   f_hands=box(p); lv_obj_add_event_cb(f_hands,hands_draw,LV_EVENT_DRAW_MAIN,NULL); f_hh=f_mm=-1; f_ss=-1; f_sa=-1;
   // ---- RIDE: orange speed sweep (minute ring lives on FACE only)
   p=pg[GW_PAGE_RIDE];
@@ -192,7 +193,7 @@ void gw_faces_create(lv_obj_t* parent){
     lv_obj_add_event_cb(c,todo_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
     t_box[i]=disc(c,26,K_CARD); lv_obj_set_style_border_width(t_box[i],3,0); lv_obj_set_style_border_color(t_box[i],col(K_SEC),0); lv_obj_align(t_box[i],LV_ALIGN_LEFT_MID,14,0);
     t_txt[i]=lv_label_create(c); lv_obj_set_style_text_font(t_txt[i],F20,0); lv_obj_set_style_text_color(t_txt[i],col(K_TXT),0);
-    lv_obj_set_width(t_txt[i],lv_obj_get_style_width(c,0)-66); lv_label_set_long_mode(t_txt[i],LV_LABEL_LONG_DOT); lv_obj_set_height(t_txt[i],28); lv_obj_align(t_txt[i],LV_ALIGN_LEFT_MID,52,1); }
+    lv_obj_set_width(t_txt[i],lv_obj_get_style_width(c,0)-66); lv_label_set_long_mode(t_txt[i],LV_LABEL_LONG_DOT); lv_obj_set_height(t_txt[i],28); lv_obj_set_style_text_line_space(t_txt[i],2,0); lv_obj_align(t_txt[i],LV_ALIGN_LEFT_MID,52,1); }
   t_more=label(p,F20,K_SEC,0,150);
   t_empty[0]=disc(p,112,K_CARD); lv_obj_align(t_empty[0],LV_ALIGN_CENTER,0,-22);
   t_empty[1]=lv_label_create(t_empty[0]); lv_obj_set_style_text_font(t_empty[1],&gu_icon,0); lv_obj_set_style_text_color(t_empty[1],col(K_ORG),0); lv_label_set_text(t_empty[1],I_MIC); lv_obj_center(t_empty[1]);
@@ -211,8 +212,8 @@ void gw_faces_create(lv_obj_t* parent){
   v_dir=label(v_card,F21,K_TXT,0,0); lv_obj_set_width(v_dir,260); lv_label_set_long_mode(v_dir,LV_LABEL_LONG_DOT);
   v_meta=label(p,F20,K_SEC,0,168);
   v_idle[0]=disc(p,140,K_CARD); lv_obj_align(v_idle[0],LV_ALIGN_CENTER,0,-50); lv_obj_set_style_border_width(v_idle[0],3,0);
-  v_idle[1]=lv_label_create(v_idle[0]); lv_obj_set_style_text_font(v_idle[1],&gu_icon,0); lv_label_set_text(v_idle[1],I_BT); lv_obj_center(v_idle[1]);
-  v_idle[2]=label(p,F21,K_TXT,0,64); v_idle[3]=label(p,&gu_lab,K_SEC,0,104); lv_obj_set_style_text_letter_space(v_idle[3],2,0);
+  v_idle[1]=lv_label_create(v_idle[0]); lv_obj_set_style_text_font(v_idle[1],&gu_icon,0); lv_label_set_text(v_idle[1],I_NAV); lv_obj_center(v_idle[1]);
+  v_idle[2]=label(p,F21,K_TXT,0,64); v_idle[3]=label(p,F20,K_SEC,0,102);
   // ---- page dots (top layer: also visible over the native chat page). Transient, like watchOS.
   dotbar=lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(dotbar); lv_obj_set_size(dotbar,140,12); lv_obj_align(dotbar,LV_ALIGN_CENTER,0,184);
   lv_obj_set_flex_flow(dotbar,LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(dotbar,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
@@ -232,16 +233,17 @@ void gw_faces_create(lv_obj_t* parent){
   { lv_obj_t* hh=label(sheet,&gu_lab,K_SEC,0,182); lv_label_set_text(hh,"TAP TO CLOSE"); lv_obj_set_style_text_letter_space(hh,2,0); }
   sheet_t=sh_t; sheet_b=sh_b;
   // ---- Control Center (swipe up on the face)
-  cc=box(parent); lv_obj_set_style_bg_color(cc,lv_color_black(),0); lv_obj_set_style_bg_opa(cc,LV_OPA_COVER,0); lv_obj_add_flag(cc,LV_OBJ_FLAG_HIDDEN|LV_OBJ_FLAG_CLICKABLE);
+  cc=box(parent); lv_obj_set_style_radius(cc,LV_RADIUS_CIRCLE,0); lv_obj_set_style_bg_color(cc,col(K_BG),0); lv_obj_set_style_bg_opa(cc,LV_OPA_COVER,0); lv_obj_add_flag(cc,LV_OBJ_FLAG_HIDDEN|LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(cc,cc_bg_click,LV_EVENT_CLICKED,NULL);
-  cc_stat=label(cc,F20,K_SEC,0,-158);
+  cc_stat=label(cc,F20,K_SEC,0,-150);
   static const char* IC[GW_CC_N]={I_SUN,I_VOL,I_MOON,I_DND}; static const char* LB[GW_CC_N]={"亮度","音量","夜间","勿扰"};
-  for(int i=0;i<GW_CC_N;i++){ int x=(i%2)?60:-60, y=(i/2)?72:-60;
-    cc_tile[i]=disc(cc,92,K_CARD2); lv_obj_align(cc_tile[i],LV_ALIGN_CENTER,x,y); lv_obj_add_flag(cc_tile[i],LV_OBJ_FLAG_CLICKABLE);
+  for(int i=0;i<GW_CC_N;i++){ int x=(i%2)?64:-64, y=(i/2)?80:-56;
+    cc_tile[i]=disc(cc,104,K_CARD2); lv_obj_align(cc_tile[i],LV_ALIGN_CENTER,x,y); lv_obj_add_flag(cc_tile[i],LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(cc_tile[i],cc_click,LV_EVENT_CLICKED,(void*)(intptr_t)i);
-    cc_ic[i]=lv_label_create(cc_tile[i]); lv_obj_set_style_text_font(cc_ic[i],&gu_sm,0); lv_label_set_text(cc_ic[i],IC[i]); lv_obj_align(cc_ic[i],LV_ALIGN_CENTER,0,-10);
-    cc_val[i]=lv_label_create(cc_tile[i]); lv_obj_set_style_text_font(cc_val[i],F20,0); lv_obj_align(cc_val[i],LV_ALIGN_CENTER,0,20);
-    cc_lb[i]=label(cc,F20,K_SEC,x,y+60); lv_label_set_text(cc_lb[i],LB[i]); }
+    cc_ic[i]=lv_label_create(cc_tile[i]); lv_obj_set_style_text_font(cc_ic[i],&gu_sm,0); lv_label_set_text(cc_ic[i],IC[i]); lv_obj_align(cc_ic[i],LV_ALIGN_CENTER,0,-14);
+    lv_obj_set_style_transform_scale(cc_ic[i],346,0); lv_obj_update_layout(cc_ic[i]); lv_obj_set_style_transform_pivot_x(cc_ic[i],lv_obj_get_width(cc_ic[i])/2,0); lv_obj_set_style_transform_pivot_y(cc_ic[i],lv_obj_get_height(cc_ic[i])/2,0);
+    cc_val[i]=lv_label_create(cc_tile[i]); lv_obj_set_style_text_font(cc_val[i],F20,0); lv_obj_align(cc_val[i],LV_ALIGN_CENTER,0,24);
+    cc_lb[i]=label(cc,F20,K_SEC,x,y+68); lv_label_set_text(cc_lb[i],LB[i]); }
   
   gw_grok_create(chat);
 }
@@ -330,17 +332,20 @@ void gw_faces_show(int page, const gw_state_t* s){
     snprintf(b,sizeof b,"%d:%02d",s->ride_min/60,s->ride_min%60); lv_label_set_text(r_f[1],b);
     if(s->nav_active&&s->nav_eta&&s->nav_eta[0]){ lv_label_set_text(r_f[0],s->nav_eta); lv_label_set_text(r_fl[0],"到达"); }
     else { snprintf(b,sizeof b,"%.1f",s->ride_km); lv_label_set_text(r_f[0],b); lv_label_set_text(r_fl[0],"里程 km"); }
-    lv_label_set_text(r_hint,s->ble?"等待手机 GPS":"打开 GrokWatch App"); lv_obj_set_style_text_color(r_hint,col(s->ble?K_SEC:K_ORG),0);
+    lv_label_set_text(r_hint,s->ble?"等待 GPS":"App 未连接"); lv_obj_set_style_text_color(r_hint,col(K_SEC),0); lv_obj_set_style_text_opa(r_hint,190,0);
     has?lv_obj_add_flag(r_hint,LV_OBJ_FLAG_HIDDEN):lv_obj_remove_flag(r_hint,LV_OBJ_FLAG_HIDDEN);
   } else if(page==GW_PAGE_TODO){
     bool any=s->n_todo>0;
     if(s->todo_state==3&&!any) snprintf(b,sizeof b,"待办 · 未启用"); else if(s->todo_state==2&&!any) snprintf(b,sizeof b,"待办 · 离线"); else if(s->todo_state==1&&!any) snprintf(b,sizeof b,"待办 · 同步中"); else if(s->todo_open) snprintf(b,sizeof b,"待办 · %d",s->todo_open); else snprintf(b,sizeof b,"待办");
     lv_label_set_text(t_head,b);
-    { int n=s->n_todo>GW_TODO_ROWS?GW_TODO_ROWS:s->n_todo; int rh=n<=4?60:48, sp=n<=4?70:54; for(int i=0;i<n;i++){ lv_obj_set_height(t_row[i],rh); lv_obj_set_style_radius(t_row[i],rh/2,0); lv_obj_align(t_row[i],LV_ALIGN_CENTER,0,4+i*sp-(n-1)*sp/2); } }
+    { int n=s->n_todo>GW_TODO_ROWS?GW_TODO_ROWS:s->n_todo; int rh=n<=4?60:48, gap=n<=4?10:6, lh=lv_font_get_line_height(F20), hs[GW_TODO_ROWS], tot=0;
+      for(int i=0;i<n;i++){ lv_point_t sz; const char* tx=s->todo_text[i]?s->todo_text[i]:""; lv_text_get_size(&sz,tx,F20,0,2,lv_obj_get_width(t_txt[i]),LV_TEXT_FLAG_NONE);
+        bool two=n<=4&&sz.y>lh+2; hs[i]=two?rh+lh-6:rh; lv_obj_set_height(t_txt[i],two?2*lh+2:lh+2); tot+=hs[i]+(i?gap:0); }
+      for(int i=0,y=4-tot/2;i<n;i++){ lv_obj_set_height(t_row[i],hs[i]); lv_obj_set_style_radius(t_row[i],LV_MIN(hs[i],rh)/2,0); lv_obj_align(t_row[i],LV_ALIGN_TOP_MID,0,233+y); y+=hs[i]+gap; } }
     for(int i=0;i<GW_TODO_ROWS;i++){ if(i<s->n_todo){ bool d=s->todo_done[i];
-        lv_label_set_text(t_txt[i],s->todo_text[i]?s->todo_text[i]:""); lv_obj_set_style_text_color(t_txt[i],col(d?K_SEC:K_TXT),0);
+        lv_label_set_text(t_txt[i],s->todo_text[i]?s->todo_text[i]:""); lv_obj_set_style_text_color(t_txt[i],col(K_TXT),0); lv_obj_set_style_text_opa(t_txt[i],d?150:255,0);
         lv_obj_set_style_text_decor(t_txt[i],d?LV_TEXT_DECOR_STRIKETHROUGH:LV_TEXT_DECOR_NONE,0);
-        lv_obj_set_style_bg_color(t_box[i],col(d?K_SEC:K_CARD),0); lv_obj_remove_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
+        lv_obj_set_style_bg_color(t_box[i],col(d?K_TXT:K_CARD),0); lv_obj_set_style_border_color(t_box[i],col(d?K_TXT:K_SEC),0); lv_obj_set_style_opa(t_box[i],d?170:255,0); lv_obj_remove_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
       else lv_obj_add_flag(t_row[i],LV_OBJ_FLAG_HIDDEN); }
     if(s->todo_open>s->n_todo){ snprintf(b,sizeof b,"还有 %d 条",s->todo_open-s->n_todo); lv_label_set_text(t_more,b); lv_obj_remove_flag(t_more,LV_OBJ_FLAG_HIDDEN);} else lv_obj_add_flag(t_more,LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(t_empty[2],s->todo_state==3?"服务器未启用待办\n请检查服务配置":s->todo_state==2?"连不上服务器\n检查服务与网络":"长按说话\n添加待办");
@@ -362,10 +367,10 @@ void gw_faces_show(int page, const gw_state_t* s){
         if(sp){ *sp=0; un=sp+1; } lv_label_set_text(v_dist,d); lv_label_set_text(v_unit,un); nav_layout(); } lv_label_set_text(v_dir,s->nav_dir?s->nav_dir:"");
       snprintf(b,sizeof b,"%s  " "\xC2\xB7" "  ETA %s",s->nav_dur?s->nav_dur:"",s->nav_eta?s->nav_eta:""); lv_label_set_text(v_meta,b);
     } else {
-      lv_obj_set_style_border_color(v_idle[0],col(s->ble?K_ORG:K_TER),0); lv_obj_set_style_border_opa(v_idle[0],s->ble?LV_OPA_80:LV_OPA_COVER,0);
-      lv_obj_set_style_text_color(v_idle[1],col(s->ble?K_ORG:K_SEC),0);
-      lv_label_set_text(v_idle[2],s->ble?"等待导航":"等待手机连接");
-      lv_label_set_text(v_idle[3],s->ble?"START IN AMAP / MAPS":"OPEN GROKWATCH APP"); }
+      lv_obj_set_style_border_color(v_idle[0],col(K_TER),0); lv_obj_set_style_border_opa(v_idle[0],LV_OPA_COVER,0);
+      lv_obj_set_style_text_color(v_idle[1],col(K_SEC),0);
+      lv_label_set_text(v_idle[2],"暂无导航");
+      lv_label_set_text(v_idle[3],s->ble?"手机开始导航后显示":"App 未连接"); }
   }
 }
 
