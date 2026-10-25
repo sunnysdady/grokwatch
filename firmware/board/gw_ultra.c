@@ -592,7 +592,7 @@ void gw_standby_create(lv_obj_t* parent){ if(!sb_ready) sb_setup();
   lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(sb,LV_OBJ_FLAG_SCROLLABLE); lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(sb,sb_draw,LV_EVENT_DRAW_MAIN_END,NULL); }
 bool gw_standby_is_on(void){ return sb&&!lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN); }
-static void sb_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
+static int sb_a=0; static void sb_opa(void* o,int32_t v){ sb_a=v; lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
 static void sb_fade(int from,int ms){ lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,sb); lv_anim_set_exec_cb(&a,sb_opa);
   lv_anim_set_values(&a,from,LV_OPA_COVER); lv_anim_set_duration(&a,ms); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
 // 2.6.17: touch never woke the standby clock (only the keys called PowerSaveTimer::WakeUp). While shown, the standby
@@ -600,8 +600,14 @@ static void sb_fade(int from,int ms){ lv_anim_t a; lv_anim_init(&a); lv_anim_set
 static void (*sb_tap)(void);
 static void sb_press(lv_event_t* e){ (void)e; if(sb_tap) sb_tap(); }
 void gw_standby_set_tap(void (*cb)(void)){ sb_tap=cb; if(sb) lv_obj_add_event_cb(sb,sb_press,LV_EVENT_PRESSED,NULL); }
-void gw_standby_show(bool on){ if(!sb) return; if(on) lv_obj_add_flag(sb,LV_OBJ_FLAG_CLICKABLE); else lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE);
-  if(on){ lv_obj_remove_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sb); sb_fade(0,280); } else lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); }
+// 2.6.19: enter = 360 ms ease-out fade in; leave = 220 ms ease-in fade out (exit faster than enter). The layer stays
+// clickable during the fade-out so the waking touch can never land on the page underneath.
+static void sb_out_done(lv_anim_t* a){ (void)a; if(sb){ lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE); } }
+void gw_standby_show(bool on){ if(!sb) return; lv_anim_delete(sb,sb_opa);
+  if(on){ if(lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN)) sb_a=0; lv_obj_add_flag(sb,LV_OBJ_FLAG_CLICKABLE); lv_obj_remove_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sb); sb_fade(sb_a<LV_OPA_COVER?sb_a:0,360); return; }
+  if(lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN)) return;
+  lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,sb); lv_anim_set_exec_cb(&a,sb_opa); lv_anim_set_values(&a,sb_a,0);
+  lv_anim_set_duration(&a,220); lv_anim_set_path_cb(&a,lv_anim_path_ease_in); lv_anim_set_completed_cb(&a,sb_out_done); lv_anim_start(&a); }
 void gw_standby_set(int hh,int mm,uint32_t minute_count){
   if(!sb) return; char b[5]={(char)('0'+(hh/10)%10),(char)('0'+hh%10),(char)('0'+(mm/10)%10),(char)('0'+mm%10),0}; if(hh<0||mm<0) return;
   bool changed=strcmp(b,sb_txt)!=0; memcpy(sb_txt,b,5);

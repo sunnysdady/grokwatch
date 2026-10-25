@@ -13,13 +13,14 @@
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
 #include <wifi_manager.h>
-#include "power_save_timer.h"
+#include "gw_sbsm.h"
+#include <functional>
 #include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
 
 extern "C" void gw_ble_start(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
-void NavUiSetHaptic(void (*f)(int)); void NavUiSetWake(void (*f)()); bool NavUiIsStandby(); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
+void NavUiSetHaptic(void (*f)(int)); void NavUiSetBacklight(void (*f)(int)); void NavUiKey(int ev, std::function<void()> normal); bool NavUiIsStandby(); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
 void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void);
 #include <esp_timer.h>
 #include "gw_health.h"
@@ -108,6 +109,7 @@ public:
         DisplayLockGuard lock(this);
         gw_grok_text(role, content);
         if (!strcmp(role, "user") && content[0]) gw_grok_state(2);   // question heard -> thinking until speech starts
+        if (!strcmp(role, "assistant") && content[0]) NavUiKey(SB_EV_VOICE, nullptr);   // 2.6.19: a spoken reply wakes standby to the GrokBot page
     }
     void ClearChatMessages() override {
         DisplayLockGuard lock(this);
@@ -194,7 +196,6 @@ private:
     Button button2_;
     RoundLcdDisplay* display_;
     StopwatchBacklight* backlight_;
-    PowerSaveTimer* power_save_timer_ = nullptr;
 public:
     bool pa_on_ = true;
 private:
@@ -318,38 +319,34 @@ private:
         if (!t) { esp_timer_create_args_t a = {}; a.callback = [](void*) { self_->ioe_.digitalWrite(IOE_PIN_MOTOR, LOW); }; a.name = "haptic"; esp_timer_create(&a, &t); }
         self_->ioe_.digitalWrite(IOE_PIN_MOTOR, HIGH); esp_timer_stop(t); esp_timer_start_once(t, ms * 1000);
     }
-    bool screen_off_ = false;
-    void WakeScreen() { if (screen_off_) { screen_off_ = false; backlight_->RestoreBrightness(); } if (power_save_timer_) power_save_timer_->WakeUp(); }
+    // 2.6.19: no WakeScreen / screen_off_ / PowerSaveTimer standby any more. Every key goes through NavUiKey(): the
+    // standby state machine (gw_sbsm.c, docs/relay/STANDBY-SPEC.md) decides "wake only" vs "wake + normal action".
+    static void SetBacklightPct(int pct) { if (!self_ || !self_->backlight_) return; if (pct < 0) self_->backlight_->RestoreBrightness(); else self_->backlight_->SetBrightness(pct); }
     void InitializeButtons() {
         self_ = this;
         NavUiSetHaptic(&M5StackStopwatchBoard::Haptic);
         NavUiSetChatTap([]() { Application::GetInstance().ToggleChatState(); });
-        NavUiSetWake([]() { self_->WakeScreen(); });   // 2.6.17: tap on the standby clock wakes like a key press
+        NavUiSetBacklight(&M5StackStopwatchBoard::SetBacklightPct);
         // Yellow key (G2) = navigation key: click = next page, double = home (watch face), long = volume
-        button1_.OnClick([this]() {
-            WakeScreen();
+        button1_.OnClick([this]() { NavUiKey(SB_EV_KEY_YELLOW, [this]() {
             if (NavUiPowerPending()) { NavUiPowerMenu(false); return; }   // cancel power-off
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting && !WifiManager::GetInstance().IsConnected()) { EnterWifiConfigMode(); return; }
             NavUiNext();
-        });
-        button1_.OnDoubleClick([this]() { WakeScreen(); NavUiHome(); });
-        button1_.OnLongPress([this]() {
-            WakeScreen();
+        }); });
+        button1_.OnDoubleClick([this]() { NavUiKey(SB_EV_KEY_YELLOW, []() { NavUiHome(); }); });
+        button1_.OnLongPress([this]() { NavUiKey(SB_EV_KEY_YELLOW, [this]() {
             auto* codec = GetAudioCodec();
             int volume = codec->output_volume() + 10;
             if (volume > 100) volume = 10;
             codec->SetOutputVolume(volume);
             Haptic(25);
             GetDisplay()->ShowNotification(std::string(Lang::Strings::VOLUME) + ":" + std::to_string(volume) + "%");
-        });
+        }); });
         // Blue key (G1) = Action button: hold to talk to Grok, release to send. Also confirms power-off.
         button2_.OnPressDown([this]() {
-            WakeScreen();
             if (NavUiPowerPending()) { Haptic(80); vTaskDelay(pdMS_TO_TICKS(120)); pmic_.shutdown(); return; }
-            Haptic(15);
-            NavUiShowChat();
-            Application::GetInstance().StartListening();
+            NavUiKey(SB_EV_KEY_BLUE, []() { Haptic(15); NavUiShowChat(); Application::GetInstance().StartListening(); });
         });
         button2_.OnPressUp([this]() {
             if (NavUiPowerPending()) return;
@@ -363,14 +360,9 @@ private:
             auto* b = static_cast<M5StackStopwatchBoard*>(arg); uint8_t st = 0;
             if (b->pmic_.irqGetBtnStatus(&st, M5PM1_CLEAN_ALL) != M5PM1_OK || !st) return;
             Application::GetInstance().Schedule([b, st]() {
-                if (st & M5PM1_IRQ_BTN_DOUBLE) { b->WakeScreen(); NavUiPowerMenu(true); }
-                else if (st & M5PM1_IRQ_BTN_CLICK) {
-                    if (NavUiPowerPending()) { NavUiPowerMenu(false); return; }
-                    // 2.6.18: red key click toggles the standby clock (was: backlight off/on, which read as "does nothing"
-                    // to enter standby). A screen turned off by an older path is still woken by the same click.
-                    if (b->screen_off_ || NavUiIsStandby()) { b->WakeScreen(); NavUiStandby(false); }
-                    else { Haptic(15); NavUiStandby(true); }
-                }
+                (void)b;
+                if (st & M5PM1_IRQ_BTN_DOUBLE) NavUiKey(SB_EV_RED_DOUBLE, []() { NavUiPowerMenu(true); });
+                else if (st & M5PM1_IRQ_BTN_CLICK) NavUiKey(SB_EV_RED_CLICK, nullptr);   // toggles standby (power menu open -> closes it)
             });
         };
         pa.arg = this; pa.name = "pwrkey"; esp_timer_handle_t pt; esp_timer_create(&pa, &pt); esp_timer_start_periodic(pt, 120 * 1000);
@@ -412,20 +404,8 @@ private:
         ESP_LOGI(TAG, "Touch ready");
     }
 
-    void InitializePowerSaveTimer() {
-        // Dim AMOLED after 60s idle on battery (AMOLED black pixels draw ~0 power)
-        power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
-        power_save_timer_->OnEnterSleepMode([this]() {
-            GetDisplay()->SetChatMessage("system", "");
-            NavUiStandby(true);                       // minimal black standby clock (AMOLED: black = off pixels)
-            GetBacklight()->SetBrightness(10);
-        });
-        power_save_timer_->OnExitSleepMode([this]() {
-            NavUiStandby(false);
-            GetBacklight()->RestoreBrightness();
-        });
-        power_save_timer_->SetEnabled(true);
-    }
+    // 2.6.19: PowerSaveTimer removed (it entered standby on its own after 60 s on battery and light-slept the CPU,
+    // which also muted the wake word). Standby is owned by the nav_ui state machine; Wi-Fi/BLE stay up in standby.
 
 public:
     // GrokWatch: boot record rides along in the OTA check body (board.gw_boot), readable server-side without serial.
@@ -443,7 +423,6 @@ public:
         InitializeI2c();
         InitializeSpi();
         InitializeDisplay();
-        InitializePowerSaveTimer();
         InitializeTouch();
         InitializeButtons();
         { auto& sm=SsidManager::GetInstance();
@@ -502,10 +481,7 @@ public:
             charging = (charge_state_level == 0);
             discharging = !charging;
         }
-        if (power_save_timer_ && discharging != last_discharging) {
-            power_save_timer_->SetEnabled(discharging);
-            last_discharging = discharging;
-        }
+        last_discharging = discharging; (void)last_discharging;
 
         const int BATTERY_MIN_VOLTAGE = 3400;
         const int BATTERY_MAX_VOLTAGE = 4200;
@@ -520,9 +496,6 @@ public:
     }
 
     void SetPowerSaveLevel(PowerSaveLevel level) override {
-        if (level != PowerSaveLevel::LOW_POWER && power_save_timer_) {
-            power_save_timer_->WakeUp();
-        }
         WifiBoard::SetPowerSaveLevel(level);
     }
 };

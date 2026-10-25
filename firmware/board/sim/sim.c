@@ -243,6 +243,14 @@ int main(int argc,char**argv){
   { static int woke=0; gw_standby_set_tap(sim_wake); int p0=page; sim_woke=0; tap(233,233); step(300);
     printf("AUDIT %s standby tap -> wake cb=%d, page unchanged by fall-through=%d\n",sim_woke==1&&page==p0?"OK":"FAIL",sim_woke,page==p0); (void)woke;
     gw_standby_show(true); }
+  { /* 2.6.19 enter/exit transition GIF frames (40 ms) + fade-out swallow audit */
+    gw_standby_show(false); step(400); go(1,1); step(400); gw_standby_set(10,9,0); gif_n=0;
+    for(int i=0;i<3;i++){ step(40); gif_frame("sb_enter"); } gw_standby_show(true); for(int i=0;i<12;i++){ step(40); gif_frame("sb_enter"); }
+    gif_n=0; for(int i=0;i<3;i++){ step(40); gif_frame("sb_exit"); } gw_standby_show(false);
+    step(100); int clk=lv_obj_has_flag(lv_layer_top(),LV_OBJ_FLAG_HIDDEN); (void)clk; int mid=gw_standby_is_on();
+    for(int i=0;i<9;i++){ step(40); gif_frame("sb_exit"); }
+    printf("AUDIT %s standby fade-out: still covering at 100ms=%d, gone after 460ms=%d\n",mid&&!gw_standby_is_on()?"OK":"FAIL",mid,!gw_standby_is_on());
+    gw_standby_show(true); step(400); }
   gw_faces_set_night(true); gw_standby_set(10,9,0); shot("standby_night"); gw_faces_set_night(false);
   gw_standby_set(9,41,3); shot("standby_drift_min3");
   gw_standby_set(1,23,0); shot("standby_glyphs_0123"); gw_standby_set(45,67,0); shot("standby_glyphs_4567"); gw_standby_set(89,0,0); shot("standby_glyphs_8900"); gw_standby_show(false);

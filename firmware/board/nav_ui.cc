@@ -19,6 +19,7 @@
 #include "gw_faces.h"
 #include "gw_todo_net.h"
 #include "gw_input.h"
+#include "gw_sbsm.h"
 #define TAG "NavUI"
 #define GW_RX_LOG 1  // log type/len of each incoming frame (no content)
 extern "C" bool gw_ble_link(void);
@@ -50,7 +51,10 @@ static void cc_tap(int id){ auto& b=Board::GetInstance();
   if(id==GW_CC_DND){ dnd=!dnd; Settings s("gw",true); s.SetInt("dnd",dnd); }
   if(haptic) haptic(15); cc_fill(); gw_cc_open(&cc,cc_tap); }
 
+static int sb_ev(sb_event_t ev,const char* why); void NavUiPowerMenu(bool show);
 static void apply(int ev){
+  if(ev&GW_EV_NAV_START) sb_ev(SB_EV_NAV_START,"nav start"); else if(ev&(GW_EV_TURN_SOON|GW_EV_TURN_NOW)) sb_ev(SB_EV_NAV_TURN,"nav turn");
+  if(ev&GW_EV_SUMMARY) sb_ev(SB_EV_SUMMARY,"summary");
   if(ev&GW_EV_NAV_START){ page=GW_PAGE_NAV; buzz(30); }
   if(ev&GW_EV_TURN_SOON){ buzz(90); ESP_LOGI(TAG,"turn in 200m"); }
   if(ev&GW_EV_TURN_NOW){ buzz2(); ESP_LOGI(TAG,"turn now"); }
@@ -68,11 +72,42 @@ static void frame_cb(lv_event_t*){ nfr++; fr_total++; if(fr_start){ int64_t d=no
 static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   if(fps_log && nfr>3) ESP_LOGW(TAG,"fps=%d frame avg %.1f ms max %.1f ms (%d frames / %.0f ms)",(int)(nfr*1e6/(t-fr_t0)),fr_sum/1e3/nfr,fr_max/1e3,nfr,(t-fr_t0)/1e3);
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }
-static void (*wake_fn)()=nullptr; void NavUiStandby(bool on);
+// ---- 2.6.19 standby: ONE state machine (gw_sbsm.c, spec docs/relay/STANDBY-SPEC.md) owns enter/leave. Everything that
+// used to wake/dim on its own (PowerSaveTimer callbacks, WakeScreen, screen_off_, standby tap hook) now sends an event.
+static void (*backlight_fn)(int pct)=nullptr;   // board: pct 0-100, -1 = restore the user brightness (smooth ramp)
+static gw_sbsm_t sbm; static bool sbm_init=false; static lv_timer_t* sb_anim_t=nullptr;
 static bool standby=false; static uint32_t sb_min=0; static int sb_last=-1;
 static void standby_tick(){ if(!standby) return; time_t now=time(nullptr); struct tm t; localtime_r(&now,&t);
   if(t.tm_min!=sb_last){ sb_last=t.tm_min; gw_standby_set(t.tm_hour,t.tm_min,sb_min++); } }
-static void tick_cb(lv_timer_t*){ gw_health_ui_beat(); standby_tick(); bool b=linked(); int ev=gw_model_tick(now_us()); if(ev&GW_EV_NAV_END) ESP_LOGW(TAG,"nav stale 20s -> idle");
+static int64_t ms_now(){ return now_us()/1000; }
+static sb_ctx_t sb_ctx(){ sb_ctx_t c; c.page=page; c.nav_active=gw_m.nav_active; c.ride_active=gw_m.last_spd!=0;
+  int ds=(int)Application::GetInstance().GetDeviceState(); c.voice_busy=ds==kDeviceStateListening||ds==kDeviceStateSpeaking||ds==kDeviceStateConnecting;
+  c.overlay_open=gw_cc_is_open()||gw_faces_sheet_open()||power_pending; return c; }
+// Fully in standby: hide the page objects under the clock so the 1 s second hand / page timers stop redrawing and
+// flushing behind an opaque layer (power). Unhidden at the start of the wake fade so the page shows through it.
+static lv_obj_t* sb_hid[16]; static int sb_nhid=0;
+static void sb_pages_hidden(bool h){ if(h){ lv_obj_t* scr=lv_screen_active(); sb_nhid=0; for(uint32_t i=0;i<lv_obj_get_child_count(scr)&&sb_nhid<16;i++){ lv_obj_t* o=lv_obj_get_child(scr,i);
+      if(!lv_obj_has_flag(o,LV_OBJ_FLAG_HIDDEN)){ lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN); sb_hid[sb_nhid++]=o; } } }
+  else { for(int i=0;i<sb_nhid;i++) lv_obj_remove_flag(sb_hid[i],LV_OBJ_FLAG_HIDDEN); sb_nhid=0; } }
+static void sb_anim_done(lv_timer_t* t){ lv_timer_delete(t); sb_anim_t=nullptr; sb_ctx_t c=sb_ctx(); gw_sbsm_event(&sbm,SB_EV_ANIM_DONE,&c,ms_now());
+  if(sbm.st==SB_STANDBY) sb_pages_hidden(true);
+  ESP_LOGW("GW-SB","state=%s",gw_sbsm_state_str(sbm.st)); }
+static void go(int p,int dd);
+static void sb_exec(int a,const char* why){
+  if(!a) return; ESP_LOGW("GW-SB","%s -> act=0x%x state=%s prev=%d",why,a,gw_sbsm_state_str(sbm.st),sbm.prev_page);
+  if(a&SB_A_CLOSE_OVERLAY){ gw_cc_open(nullptr,nullptr); if(power_pending){ power_pending=false; } gw_faces_sheet(nullptr,nullptr); }
+  if(a&SB_A_SHOW){ sb_pages_hidden(false); standby=true; sb_last=-1; standby_tick(); gw_standby_show(true); }
+  if(a&SB_A_DIM && backlight_fn) backlight_fn(10);
+  if(a&SB_A_HIDE){ standby=false; wake_us=now_us(); sb_pages_hidden(false); gw_standby_show(false);
+    int to=(a&SB_A_GOTO_NAV)?GW_PAGE_NAV:(a&SB_A_GOTO_CHAT)?GW_PAGE_CHAT:(a&SB_A_GOTO_PREV)?sbm.prev_page:page;
+    if(to!=page) go(to,to>page?1:-1); else render(); }
+  if(a&SB_A_RESTORE && backlight_fn) backlight_fn(-1);
+  if(a&SB_A_HAPTIC && haptic) haptic(15);
+  if(a&(SB_A_SHOW|SB_A_HIDE)){ if(sb_anim_t) lv_timer_delete(sb_anim_t); sb_anim_t=lv_timer_create(sb_anim_done,(a&SB_A_SHOW)?SB_ENTER_MS:SB_EXIT_MS,nullptr); } }
+// runs in the LVGL/UI context (under the display lock); returns the action mask
+static int sb_ev(sb_event_t ev,const char* why){ if(!sbm_init){ gw_sbsm_init(&sbm,ms_now()); sbm_init=true; } sb_ctx_t c=sb_ctx();
+  int a=gw_sbsm_event(&sbm,ev,&c,ms_now()); sb_exec(a&~SB_A_PASS,why); return a; }
+static void tick_cb(lv_timer_t*){ gw_health_ui_beat(); standby_tick(); sb_ev(SB_EV_TICK,"idle"); bool b=linked(); int ev=gw_model_tick(now_us()); if(ev&GW_EV_NAV_END) ESP_LOGW(TAG,"nav stale 20s -> idle");
   if(page<=2 || b!=last_ble || page==GW_PAGE_NAV || ev) render(); last_ble=b; }
 static void gesture_cb(lv_event_t*){
   lv_dir_t d=lv_indev_get_gesture_dir(lv_indev_active()); last_gesture=now_us();
@@ -98,7 +133,7 @@ static void click_cb(lv_event_t* e){
 }
 static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_active()) return; if(page==0) chat_try(true); }
 static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
-  if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
+  if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; if(!standby) sb_ev(SB_EV_ACTIVITY,"touch"); if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
   else if(c==LV_EVENT_RELEASED){ if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
 // P0 (2.6.4 crash): F20/F21 keep a raw .fallback to the theme text font. LvglBuiltInFont owns a heap COPY of the
 // builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
@@ -175,7 +210,7 @@ static void build_ui(){
   lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);
   if(touch_indev){ lv_indev_set_long_press_time(touch_indev,GW_CHAT_MIN_PRESS_US/1000); lv_indev_add_event_cb(touch_indev,indev_cb,LV_EVENT_ALL,nullptr); }
-  gw_standby_create(lv_layer_top()); gw_standby_set_tap([](){ ESP_LOGW(TAG,"standby tap -> wake"); if(wake_fn) wake_fn(); NavUiStandby(false); });
+  gw_standby_create(lv_layer_top()); gw_standby_set_tap([](){ sb_ev(SB_EV_TOUCH,"touch"); });   // standby layer eats the waking touch
   gw_faces_set_sec_hook(on_sec_move);
   lv_timer_create(tick_cb,1000,nullptr); lv_timer_create(sec_cb,50,nullptr); built=true;
   // 2.6.15: esp_lvgl_port runs taskLVGL at priority 1 (core 1) while audio_afe (wake word, prio 3, unpinned), opus (2),
@@ -216,16 +251,20 @@ void NavUiNext(){ NavUiToggle(); }
 void NavUiHome(){ sched([](){ gw_cc_open(nullptr,nullptr); gw_faces_sheet(nullptr,nullptr); if(page!=1) go(1,-1); }); }
 void NavUiShowChat(){ if(page!=0) sched([](){ go(0,-1); }); }
 void NavUiSetHaptic(void (*f)(int)){ haptic=f; }
-void NavUiSetWake(void (*f)()){ wake_fn=f; }
-bool NavUiIsStandby(){ return standby; }   // 2.6.18: red key toggles the standby clock   // 2.6.17: board wake (backlight + PowerSaveTimer::WakeUp)
+void NavUiSetBacklight(void (*f)(int)){ backlight_fn=f; }
+bool NavUiIsStandby(){ return standby; }
+// Keys: the board passes the key event and its normal action; the SM decides (in the UI context) whether the key only
+// wakes the watch or also does its job. ev: SB_EV_RED_CLICK / KEY_YELLOW / KEY_BLUE / RED_DOUBLE / VOICE.
+void NavUiKey(int ev,std::function<void()> normal){ sched([ev,normal](){ if(!built) return;
+  if(ev==SB_EV_RED_CLICK && power_pending){ NavUiPowerMenu(false); return; }
+  int a=sb_ev((sb_event_t)ev,ev==SB_EV_RED_CLICK?"red":ev==SB_EV_KEY_YELLOW?"yellow":ev==SB_EV_KEY_BLUE?"blue":ev==SB_EV_RED_DOUBLE?"red2":"voice");
+  if((a&SB_A_PASS) && normal) { std::function<void()> f=normal; Application::GetInstance().Schedule(std::move(f)); } }); }   // normal job runs outside the display lock   // 2.6.18: red key toggles the standby clock   // 2.6.17: board wake (backlight + PowerSaveTimer::WakeUp)
 void NavUiSetChatTap(void (*f)()){ chat_tap=f; }
 bool NavUiPowerPending(){ return power_pending; }
 void NavUiPowerMenu(bool show){ power_pending=show; sched([show](){ if(show){ gw_faces_sheet("关机？","按 蓝键 确认关机\n按 黄键 取消"); if(haptic) haptic(60);} else gw_faces_sheet(nullptr,nullptr); }); }
 void NavUiInit(){ Application::GetInstance().Schedule(refresh); }
-// Screen idle -> minimal standby clock; any input (handled by the power-save timer) -> back to the current page.
-void NavUiStandby(bool on){ sched([on](){ if(!built) return; standby=on; sb_last=-1;
-  if(on){ if(gw_cc_is_open()) gw_cc_open(nullptr,nullptr); standby_tick(); gw_standby_show(true); }
-  else { wake_us=now_us(); gw_standby_show(false); render(); } }); }
+// Test-console / legacy entry: same path as the red key.
+void NavUiStandby(bool on){ sched([on](){ if(!built) return; if(on!=standby) sb_ev(SB_EV_RED_CLICK,on?"console on":"console off"); }); }
 
 // ---- hooks for the board + the USB test console (gw_console.cc) ----
 void NavUiSetTouchIndev(lv_indev_t* i){ touch_indev=i; }

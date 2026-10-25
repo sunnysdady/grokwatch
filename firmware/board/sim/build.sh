@@ -12,6 +12,6 @@ mkdir -p "$W/lv" "$OUT"
 if [ ! -f "$W/liblv.a" ]; then echo "building LVGL..."; n=0
   find "$LV/src" -name '*.c' | while read f; do o="$W/lv/$(echo "$f" | md5sum | cut -c1-12).o"; $CC $CF -c "$f" -o "$o"; done
   ar rcs "$W/liblv.a" "$W"/lv/*.o; fi
-$CC $CF -DGW_FONT_BIN="\"$FT/cbin/font_noto_sans_common_30_4.bin\"" -o "$W/sim" "$HERE/sim.c" "$B"/gw_ultra.c "$B"/gw_grok.c "$B"/gw_model.c \
+$CC $CF -DGW_FONT_BIN="\"$FT/cbin/font_noto_sans_common_30_4.bin\"" -o "$W/sim" "$HERE/sim.c" "$B"/gw_ultra.c "$B"/gw_grok.c "$B"/gw_model.c "$B"/gw_sbsm.c \
   "$B"/gu_*.c "$B"/gn_*.c "$B"/gz_*.c "$FT/src/cbin_font.c" "$W/liblv.a" -lm
 rm -f "$OUT"/*.png; "$W/sim" "$OUT"; ${PYTHON:-python3} "$HERE/mkimg.py" "$OUT"; echo "screens: $OUT  sheet: $OUT/contact_sheet.png"
