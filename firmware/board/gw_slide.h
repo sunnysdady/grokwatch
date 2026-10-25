@@ -22,6 +22,7 @@ typedef struct {
   void (*wait)(void);                         // block until the previous push finished
   int64_t (*now)(void);                       // optional clock (us); NULL = real clock
   void (*frame_done)(void);                   // optional, after each composed frame
+  void (*vsync)(void);                        // optional: block until the panel's TE (scan restarts at the top) before a frame's first strip
 } gw_slide_hw_t;
 void gw_slide_set_hw(const gw_slide_hw_t* hw);
 void gw_slide_last_stats(int* frames,int* ms,int* max_frame_us);   // direct mode: last slide

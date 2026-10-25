@@ -8,6 +8,9 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <esp_memory_utils.h>
+#include <driver/gpio.h>
+#include <freertos/semphr.h>
+#include "config.h"
 #include <lvgl.h>
 #include <wifi_manager.h>
 #include "board.h"
@@ -94,11 +97,23 @@ static void ff_ev(lv_event_t* e){ int64_t t=now_us(); auto c=lv_event_get_code(e
   else if(c==LV_EVENT_REFR_READY && ff_bytes){ int64_t tot=t-ff_t0; agg_add(&agg_all,tot); if(in_slide) agg_add(&agg_slide,tot);
     if(land_pending){ land_pending=false; ESP_LOGW("GW-SLIDE","landing frame (real page redraw) total=%.1fms px=%ukB",tot/1e3,(unsigned)(ff_bytes/1024)); }
     if(bench_left>0){ agg_add(&agg_bench,tot); if(--bench_left==0) ff_print("GW-BENCH",agg_bench,"full-screen redraw x3:"); else lv_obj_invalidate(lv_screen_active()); } } }
+// 2.6.34 TE sync: the CO5300 pulses TE (GPIO38, enabled by 0x35 in the init table) when its scan restarts at the top.
+// Each slide frame's first strip waits for the next edge, so frames are evenly paced and never tear.
+static SemaphoreHandle_t te_sem; static volatile int te_n; static volatile int64_t te_t0, te_t1; static int te_to, te_wait_us;
+static void IRAM_ATTR te_isr(void*){ int64_t t=esp_timer_get_time(); if(!te_n) te_t0=t; te_t1=t; te_n++; BaseType_t w=pdFALSE; xSemaphoreGiveFromISR(te_sem,&w); if(w) portYIELD_FROM_ISR(); }
+static void sl_vsync(){ if(!te_n) return; int64_t t=now_us();   // no TE edge seen yet (wiring / panel off): never stall
+  xSemaphoreTake(te_sem,0); if(xSemaphoreTake(te_sem,pdMS_TO_TICKS(40))!=pdTRUE) te_to++; te_wait_us+=(int)(now_us()-t); }
+static bool te_init(){ te_sem=xSemaphoreCreateBinary(); if(!te_sem) return false;
+  gpio_config_t c={}; c.pin_bit_mask=1ULL<<DISPLAY_TE_PIN; c.mode=GPIO_MODE_INPUT; c.intr_type=GPIO_INTR_POSEDGE; gpio_config(&c);
+  esp_err_t e=gpio_install_isr_service(0); if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE) return false;
+  return gpio_isr_handler_add(DISPLAY_TE_PIN,te_isr,nullptr)==ESP_OK; }
 static bool sl_hw_on=false;
 static void slide_done(){ int64_t dur=now_us()-slide_t0; in_slide=false; land_pending=true; char ex[160];
   if(sl_hw_on){ int f,ms,mx,cm,wm; gw_slide_last_stats(&f,&ms,&mx); gw_slide_last_split(&cm,&wm);
     ESP_LOGW("GW-SLIDE","page slide DIRECT %dms frames=%d fps=%.1f max_frame=%.1fms compose=%dms bus-wait=%dms | snap_old=%.1fms snap_new=%.1fms | total_with_snaps=%dms",ms,f,f*1e3/(ms>0?ms:1),mx/1e3,cm,wm,
-      gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3,(int)(dur/1000)); return; }
+      gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3,(int)(dur/1000));
+    int n=te_n; ESP_LOGW("GW-SLIDE","te: wait=%dms (inside bus-wait) timeouts=%d panel=%.1fHz",te_wait_us/1000,te_to,n>1?(n-1)*1e6/(double)(te_t1-te_t0):0.0);
+    te_wait_us=0; te_to=0; te_n=0; return; }
   snprintf(ex,sizeof ex,"page slide %dms fps=%.1f snap_old=%.1fms snap_new=%.1fms |",(int)(dur/1000),agg_slide.n*1e6/(double)(dur>0?dur:1),
     gw_slide_last_snap_us(0)/1e3,gw_slide_last_snap_us(1)/1e3); ff_print("GW-SLIDE",agg_slide,ex); }
 static void slide_begin_stats(){ agg_slide={}; in_slide=true; slide_t0=now_us(); }
@@ -110,10 +125,10 @@ static lv_display_t* sl_d(){ return lv_display_get_default(); }
 static uint8_t* sl_buf(int i){ lv_draw_buf_t* b=i?sl_d()->buf_2:sl_d()->buf_1; return b?b->data:nullptr; }
 static void sl_wait(){ int64_t t=now_us(); while(sl_d()->flushing && now_us()-t<250000) taskYIELD(); }
 static void sl_push(int y0,int n,uint8_t* b){ lv_display_t* d=sl_d(); lv_area_t a={0,y0,GW_SLIDE_W-1,y0+n-1}; d->flushing=1; d->flush_cb(d,&a,b); }
-static gw_slide_hw_t sl_hw={0,sl_buf,sl_push,sl_wait,nullptr,nullptr};
+static gw_slide_hw_t sl_hw={0,sl_buf,sl_push,sl_wait,nullptr,nullptr,nullptr};
 static void slide_hw_init(){ lv_display_t* d=sl_d(); if(!d||!d->buf_1||!d->buf_2||!d->flush_cb) return;
   int rows=(int)(d->buf_1->data_size/(GW_SLIDE_W*2)); if((size_t)rows*GW_SLIDE_W*2>d->buf_2->data_size) rows=(int)(d->buf_2->data_size/(GW_SLIDE_W*2));
-  rows&=~1; if(rows>=8){ sl_hw.rows=rows; gw_slide_set_hw(&sl_hw); sl_hw_on=true; ESP_LOGW("GW-SLIDE","direct push on: %d rows/strip, 2 buffers, internal=%d/%d",rows,(int)esp_ptr_internal(d->buf_1->data),(int)esp_ptr_internal(d->buf_2->data)); } }
+  rows&=~1; if(rows>=8){ sl_hw.rows=rows; if(te_init()) sl_hw.vsync=sl_vsync; gw_slide_set_hw(&sl_hw); sl_hw_on=true; ESP_LOGW("GW-SLIDE","direct push on: %d rows/strip, 2 buffers, internal=%d/%d te_sync=%d",rows,(int)esp_ptr_internal(d->buf_1->data),(int)esp_ptr_internal(d->buf_2->data),sl_hw.vsync!=nullptr); } }
 static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   if(fps_log && nfr>3) ESP_LOGW(TAG,"fps=%d frame avg %.1f ms max %.1f ms (%d frames / %.0f ms)",(int)(nfr*1e6/(t-fr_t0)),fr_sum/1e3/nfr,fr_max/1e3,nfr,(t-fr_t0)/1e3);
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }

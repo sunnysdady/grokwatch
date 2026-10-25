@@ -103,12 +103,13 @@ static void compose_soft(uint8_t* dst,int y0,int n,float q){ compose_push(dst,y0
       if(a<32) d[x]=mix(d[x],s_bg,a); } } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
 static int64_t s_tc, s_tw; static int s_fr, s_mx, s_i; static int64_t s_tf;
+// with vsync the first strip leaves on TE, so the write (11 ms at 80 MHz) stays ahead of the scan
 // push one full frame at progress q (0 = exactly the old page, 1 = exactly the new page)
 static void push_frame(float q){ int v=(int)(q*1000+0.5f), x_new=s_dir*(W-(W*v)/1000), x_old=-s_dir*(GW_SLIDE_PARALLAX*v)/1000;
   if(q<=0.f){ x_new=s_dir*W; x_old=0; }
   for(int y=0;y<W;y+=hw->rows,s_i++){ int n=W-y<hw->rows?W-y:hw->rows; uint8_t* b=hw->buf(s_i&1);
     int64_t a=hnow(); if(q<=0.f) compose(b,y,n,x_new,x_old); else if(s_style==3) compose_soft(b,y,n,q); else if(s_style==2) compose_push(b,y,n,q); else if(s_style) compose_style(b,y,n,q); else compose(b,y,n,x_new,x_old);
-    int64_t c=hnow(); hw->wait(); s_tc+=c-a; s_tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
+    int64_t c=hnow(); hw->wait(); if(y==0&&hw->vsync) hw->vsync(); s_tc+=c-a; s_tw+=hnow()-c; hw->push(y,n,b); }   // compose overlaps the previous strip's transfer
   if(hw->frame_done) hw->frame_done();
   int64_t t=hnow(); int fm=(int)(t-s_tf); if(fm>s_mx) s_mx=fm; s_tf=t; s_fr++; }
 static int64_t s_t0;

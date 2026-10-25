@@ -284,7 +284,7 @@ private:
         io_config.cs_gpio_num = DISPLAY_QSPI_CS;
         io_config.dc_gpio_num = GPIO_NUM_NC;
         io_config.spi_mode = 0;
-        io_config.pclk_hz = 40 * 1000 * 1000;
+        io_config.pclk_hz = 80 * 1000 * 1000;   // 2.6.34: full frame 21.7 -> 10.9 ms (CO5300 QSPI max 80 MHz)
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 32;
         io_config.lcd_param_bits = 8;
