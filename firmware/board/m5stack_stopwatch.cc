@@ -14,6 +14,7 @@
 #include <driver/spi_master.h>
 #include <wifi_manager.h>
 #include "gw_sbsm.h"
+#include "gw_redkey.h"
 #include <functional>
 #include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
@@ -366,18 +367,19 @@ private:
             auto* b = static_cast<M5StackStopwatchBoard*>(arg); uint8_t st = 0;
             static int errs = 0; int e = b->pmic_.irqGetBtnStatus(&st, M5PM1_CLEAN_ALL);
             if (e != M5PM1_OK) { if (errs++ < 3) ESP_LOGW("GW-KEY", "red(PMIC) read err=%d", e); return; }
-            static bool irq_ok = false; bool fl = false;
-            if (st) { irq_ok = true; b->pmic_.btnGetFlag(&fl); }          // consume the press flag of the same press
-            else if (!irq_ok && b->pmic_.btnGetFlag(&fl) == M5PM1_OK && fl) st = M5PM1_IRQ_BTN_CLICK | 0x80;   // IRQ never seen: press flag = click
-            if (!st) return;
-            // 2.6.21: on this PMIC a short press of the red key raises BTN_WAKE (0x02), not BTN_CLICK (0x01) — seen on
-            // serial as "red raw=0x02". Treat WAKE as a single click unless the same read also reports a double.
-            if ((st & M5PM1_IRQ_BTN_WAKE) && !(st & M5PM1_IRQ_BTN_DOUBLE)) st |= M5PM1_IRQ_BTN_CLICK;
-            ESP_LOGW("GW-KEY", "red raw=0x%02x -> %s%s", st, (st & M5PM1_IRQ_BTN_DOUBLE) ? "double" : (st & M5PM1_IRQ_BTN_CLICK) ? "click" : "other", (st & 0x80) ? " (flag)" : "");
-            Application::GetInstance().Schedule([b, st]() {
-                (void)b;
-                if (st & M5PM1_IRQ_BTN_DOUBLE) NavUiKey(SB_EV_RED_DOUBLE, []() { NavUiPowerMenu(true); });
-                else if (st & M5PM1_IRQ_BTN_CLICK) NavUiKey(SB_EV_RED_CLICK, nullptr);   // toggles standby (power menu open -> closes it)
+            // 2.6.22: BTN_FLAG is the press source (one per press, every state); IRQ bits only confirm a double.
+            // 2.6.21 used IRQ bits once they had been seen and ignored the flag, so presses while awake (flag only)
+            // were dropped -> red worked only to wake from standby. Decoder + tests: gw_redkey.c, sim/test_redkey.c.
+            static gw_redkey_t rk; static bool rk_init = false; if (!rk_init) { gw_redkey_init(&rk); rk_init = true; }
+            bool fl = false; b->pmic_.btnGetFlag(&fl);
+            int64_t now = esp_timer_get_time() / 1000;
+            if (st || fl) ESP_LOGW("GW-KEY", "red raw irq=0x%02x flag=%d", st, (int)fl);
+            int r = gw_redkey_poll(&rk, now, st, fl ? 1 : 0);
+            if (r == RK_NONE) return;
+            ESP_LOGW("GW-KEY", "red -> %s", r == RK_DOUBLE ? "double" : "click");
+            Application::GetInstance().Schedule([r]() {
+                if (r == RK_DOUBLE) NavUiKey(SB_EV_RED_DOUBLE, []() { NavUiPowerMenu(true); });
+                else NavUiKey(SB_EV_RED_CLICK, nullptr);   // toggles standby (power menu open -> closes it)
             });
         };
         pa.arg = this; pa.name = "pwrkey"; esp_timer_handle_t pt; esp_timer_create(&pa, &pt); esp_timer_start_periodic(pt, 120 * 1000);
