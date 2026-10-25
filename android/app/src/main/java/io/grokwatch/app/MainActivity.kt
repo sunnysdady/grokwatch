@@ -66,6 +66,9 @@ class MainActivity : ComponentActivity() {
             Card {
                 Row_("通知使用权", "读取高德 / Google 地图导航和消息", notiOk()) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
                 Sep()
+                Row_("读取导航界面（无障碍）", "高德通知只写「正在导航」时，从导航界面读转向、距离、红绿灯", NavA11y.enabled(this@MainActivity)) {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                Sep()
                 Row_("蓝牙与定位", "连接手表、发送车速", ok(Manifest.permission.BLUETOOTH_CONNECT) && ok(Manifest.permission.ACCESS_FINE_LOCATION)) {
                     perms.launch(arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)) }
                 Sep()
@@ -76,6 +79,7 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(24.dp)); Section("转发")
             Card {
                 Toggle("导航", "转弯箭头、距离、道路、到达时间", p.getBoolean("nav", true)) { p.edit().putBoolean("nav", it).apply() }
+                Sep(); Toggle("读取导航界面（无障碍）", "只读高德 / Google 地图导航页上的文字，不点击、不记录位置；有数据时优先于通知", p.getBoolean("nav_a11y", true)) { p.edit().putBoolean("nav_a11y", it).apply() }
                 Sep(); Toggle("消息通知", "微信、短信等普通通知", p.getBoolean("notify", true)) { p.edit().putBoolean("notify", it).apply() }
                 Sep(); Toggle("车速", "手机 GPS，每秒一次", p.getBoolean("speed", true)) { p.edit().putBoolean("speed", it).apply() }
             }

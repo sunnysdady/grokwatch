@@ -52,7 +52,7 @@ class LinkService : Service() {
     }
     fun pushNav(n: Nav, icon: ByteArray?, force: Boolean = false) {
         if (!n.active) { Hub.send(Proto.navState(false)); lastIcon = null; return }
-        Hub.send(Proto.navState(true)); Hub.send(Proto.navData(n.dist, n.road, n.dur, n.eta))
+        Hub.send(Proto.navState(true)); Hub.send(Proto.navData(n.dist, n.road, n.dur, n.eta, if (n.light.isNotEmpty()) "L=${n.light}" else ""))
         if (icon != null && (force || !icon.contentEquals(lastIcon))) { for (p in 0..2) Hub.send(Proto.navIcon(p, icon)) }
         lastIcon = icon
     }

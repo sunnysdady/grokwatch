@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="a11y_desc">只读取高德地图 / Google 地图导航界面上的转向、距离、道路、剩余时间和红绿灯倒计时，转发到 GrokWatch 手表。不点击、不输入、不读取其他 App，不记录位置坐标。</string>
+</resources>

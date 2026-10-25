@@ -3,7 +3,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 android {
   namespace = "io.grokwatch.app"; compileSdk = 36
   defaultConfig {
-    applicationId = "io.grokwatch.app"; minSdk = 31; targetSdk = 36; versionCode = 61; versionName = "0.6.1"
+    applicationId = "io.grokwatch.app"; minSdk = 31; targetSdk = 36; versionCode = 62; versionName = "0.6.2"
     // Optional default update manifest URL; empty = user sets it in the app. Override: -PupdateUrl=...
     buildConfigField("String", "UPDATE_URL", "\"${(project.findProperty("updateUrl") as String?) ?: ""}\"")
   }

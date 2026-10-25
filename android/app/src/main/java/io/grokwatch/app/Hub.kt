@@ -4,7 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 
 enum class Link { OFF, SCANNING, CONNECTING, CONNECTED }
-data class Nav(val active: Boolean = false, val dist: String = "", val road: String = "", val dur: String = "", val eta: String = "", val turn: Turn = Turn.STRAIGHT, val app: String = "")
+data class Nav(val active: Boolean = false, val dist: String = "", val road: String = "", val dur: String = "", val eta: String = "", val turn: Turn = Turn.STRAIGHT, val app: String = "",
+               val light: String = "", val rest: String = "")   // light = traffic-light countdown seconds; rest = remaining distance
 
 /** Process-wide state shared by service, listener and UI. */
 object Hub {
@@ -17,12 +18,16 @@ object Hub {
     @Volatile var service: LinkService? = null
     // Navigation sources: the real ongoing AMap/Maps notification, and a temporary test override.
     @Volatile var realNav = Nav(); @Volatile var realIcon: ByteArray? = null
+    // Accessibility channel (高德 screen text). Preferred over the notification while fresh.
+    @Volatile var accNav: Nav? = null; @Volatile var accIcon: ByteArray? = null; @Volatile var accT = 0L
+    const val ACC_FRESH_MS = 15_000L
+    private fun accFresh() = accNav != null && android.os.SystemClock.elapsedRealtime() - accT < ACC_FRESH_MS
     @Volatile var testNav: Nav? = null; @Volatile var testIcon: ByteArray? = null
     val navLog = MutableStateFlow(listOf<String>()); val navDump = MutableStateFlow("")
     fun log(line: String) { val t = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
         navLog.value = (listOf("$t  $line") + navLog.value).take(12) }
-    fun curNav(): Nav = testNav ?: realNav
-    fun curIcon(): ByteArray? = if (testNav != null) testIcon else realIcon
+    fun curNav(): Nav = testNav ?: (if (accFresh()) accNav!! else realNav)
+    fun curIcon(): ByteArray? = if (testNav != null) testIcon else if (accFresh()) accIcon else realIcon
     /** Recompute the effective nav state and push it to the watch. */
     fun applyNav() { nav.value = curNav(); service?.pushNav(curNav(), curIcon()) }
     fun send(f: ByteArray) { service?.ble?.send(f) }

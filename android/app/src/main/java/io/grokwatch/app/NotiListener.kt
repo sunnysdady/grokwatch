@@ -35,7 +35,9 @@ class NotiListener : NotificationListenerService() {
             if (sig != lastSig) { lastSig = sig
                 Hub.log("${nav.turn} ${nav.dist} | ${nav.road} | ${nav.dur} | ${nav.eta} | 箭头:$src")
                 maybeLog(dmp, "解析=${nav.turn} 距离=${nav.dist} 道路=${nav.road} 剩余=${nav.dur} 到达=${nav.eta} 箭头=$src (候选图${cands.size})") }
-            Hub.realNav = nav; Hub.realIcon = bits; Hub.applyNav()
+            Hub.realNav = nav; Hub.realIcon = bits
+            // a placeholder notification ("正在导航") must not override fresh accessibility data; curNav() already prefers it
+            Hub.applyNav()
             return
         }
         if (!Hub.flag(this, "notify")) return
