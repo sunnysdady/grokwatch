@@ -23,6 +23,7 @@
 #include "gw_orient.h"
 
 extern "C" void gw_ble_start(void);
+extern "C" void gw_bg_load(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
 void NavUiSetHaptic(void (*f)(int)); void NavUiSetBacklight(void (*f)(int)); void NavUiKey(int ev, std::function<void()> normal); bool NavUiIsStandby(); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
 void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void); bool NavUiBusy();
@@ -516,6 +517,7 @@ public:
         gw_health_start();   // OTA: mark new image valid from local boot health (no server needed)
         gw_ble_start();
         NavUiInit();
+        gw_bg_load();   // 2.6.35: saved face background
         gw_console_start();   // USB test console: no-op unless built with GW_TEST_CONSOLE (private/debug builds)
         // [Sunny] anti-buzz: PA on only while codec output is enabled
         { esp_timer_create_args_t a={}; a.name="pa_gate"; a.arg=this;

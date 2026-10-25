@@ -306,4 +306,8 @@ int main(int argc,char**argv){
   gw_standby_set(1,23,0); shot("standby_glyphs_0123"); gw_standby_set(45,67,0); shot("standby_glyphs_4567"); gw_standby_set(89,0,0); shot("standby_glyphs_8900"); gw_standby_show(false);
   { int cnt=0; lv_obj_t* st[4096]; int sp=0; st[sp++]=lv_screen_active(); st[sp++]=lv_layer_top(); while(sp){ lv_obj_t* o=st[--sp]; cnt++; for(uint32_t k=0;k<lv_obj_get_child_count(o);k++) st[sp++]=lv_obj_get_child(o,k);} printf("PERF lvgl objects total: %d\n",cnt); }
   lv_mem_monitor_t m; lv_mem_monitor(&m); printf("PERF lvgl heap used: %u B of %u, peak %u B, frag %u%%\n",(unsigned)(m.total_size-m.free_size),(unsigned)m.total_size,(unsigned)m.max_used,(unsigned)m.frag_pct);
+    { static uint16_t bgp[W*W]; for(int y=0;y<W;y++) for(int x=0;x<W;x++){ int r=x*31/W, g=y*63/W, b=(x+y)*31/(2*W); bgp[y*W+x]=(uint16_t)(r<<11|g<<5|b); }   // 2.6.35 face background
+    gw_faces_set_bg(bgp); go(GW_PAGE_FACE,1); shot("bg_day_face");
+    night=true; gw_faces_set_night(true); gw_faces_create(lv_screen_active()); go(GW_PAGE_FACE,1); shot("bg_night_face");
+    night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); gw_faces_set_bg(NULL); }
   after24(); printf("AUDIT missing glyphs: %d\n",missing_total); return 0; }

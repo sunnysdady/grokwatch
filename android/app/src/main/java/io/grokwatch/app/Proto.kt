@@ -11,6 +11,7 @@ object Proto {
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     const val HELLO = 0x01; const val NAV_STATE = 0x10; const val NAV_DATA = 0x11; const val NAV_ICON = 0x12
     const val SPEED = 0x20; const val NOTIFY = 0x30; const val TIME = 0x40
+    const val BG_BEGIN = 0x60; const val BG_DATA = 0x61; const val BG_END = 0x62; const val BG_CLEAR = 0x63
 
     fun frame(type: Int, payload: ByteArray): ByteArray {
         val o = ByteArray(3 + payload.size); o[0] = type.toByte()

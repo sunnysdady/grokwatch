@@ -236,8 +236,18 @@ static void smooth_icon(const uint8_t* ic){ static uint8_t* s; if(!s) s=gw_psram
     #undef P
     int o=(int)((v-128)*3.5f+128); v_px[y*96+x]=o<0?0:(o>255?255:o); } }   // upscale + threshold: shape from the soft field, AA edge only ~1.2 px
 
+// 2.6.35: face background photo from the app (gw_bg.cc). Lowest child of the FACE page; dimmed further at night.
+static const void* bg_px; static lv_obj_t* f_bg; static lv_image_dsc_t bg_dsc;
+static void bg_apply(void){ if(!pg[GW_PAGE_FACE]) return;
+  if(!bg_px){ if(f_bg){ lv_obj_delete(f_bg); f_bg=NULL; } return; }
+  if(!f_bg){ f_bg=lv_image_create(pg[GW_PAGE_FACE]); lv_obj_move_to_index(f_bg,0); lv_obj_center(f_bg); lv_obj_remove_flag(f_bg,LV_OBJ_FLAG_CLICKABLE); }
+  memset(&bg_dsc,0,sizeof bg_dsc); bg_dsc.header.magic=LV_IMAGE_HEADER_MAGIC; bg_dsc.header.cf=LV_COLOR_FORMAT_RGB565; bg_dsc.header.w=466; bg_dsc.header.h=466;
+  bg_dsc.header.stride=466*2; bg_dsc.data=bg_px; bg_dsc.data_size=466*466*2; lv_image_cache_drop(&bg_dsc); lv_image_set_src(f_bg,NULL); lv_image_set_src(f_bg,&bg_dsc);
+  lv_obj_set_style_image_recolor(f_bg,lv_color_black(),0); lv_obj_set_style_image_recolor_opa(f_bg,night?LV_OPA_60:LV_OPA_TRANSP,0); }
+void gw_faces_set_bg(const void* px){ bg_px=px; bg_apply(); }
+
 void gw_faces_create(lv_obj_t* parent){
-  if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); root=NULL; cur=-1; }
+  if(root){ lv_obj_delete(root); lv_obj_delete(chat); lv_obj_delete(dotbar); lv_obj_delete(sheet); lv_obj_delete(cc); f_bg=NULL; root=NULL; cur=-1; }
   // chat-page decoration sits right above the native container (index 1), under xiaozhi's emoji/status labels
   chat=box(parent); lv_obj_move_to_index(chat,1);
   c_time=label(chat,&gu_sm,K_ORG,0,-192); lv_obj_set_style_text_letter_space(c_time,1,0);  // -192: clear of the Grok status line (-152)
@@ -255,6 +265,7 @@ void gw_faces_create(lv_obj_t* parent){
   for(int i=3;i<=12;i+=3){ bool q=true; char nb[4]; snprintf(nb,sizeof nb,"%d",i);   // gu_sm covers 0x20-0x7E: every digit present
     int rr=i==6?166:176; lv_obj_t* n=label(p,&gn_hour,q?K_TXT:K_SEC,(rr*lv_trigo_sin(i*30))>>15,-((rr*lv_trigo_cos(i*30))>>15)); lv_label_set_text(n,nb); }
   f_hands=box(p); lv_obj_add_event_cb(f_hands,hands_draw,LV_EVENT_DRAW_MAIN,NULL); f_hh=f_mm=-1; f_ss=-1; f_sa=-1;
+  bg_apply();   // 2.6.35: re-attach the background photo (night recreate)
   // ---- RIDE: orange speed sweep (minute ring lives on FACE only)
   p=pg[GW_PAGE_RIDE];
   r_arc=arc(p,360,12,K_CARD,K_ORG); lv_obj_center(r_arc); lv_obj_add_flag(r_arc,LV_OBJ_FLAG_HIDDEN);   // HomeView: no dial

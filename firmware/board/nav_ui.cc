@@ -101,7 +101,7 @@ static void ff_ev(lv_event_t* e){ int64_t t=now_us(); auto c=lv_event_get_code(e
 // 2.6.34 TE sync: the CO5300 pulses TE (GPIO38, enabled by 0x35 in the init table) when its scan restarts at the top.
 // Each slide frame's first strip waits for the next edge, so frames are evenly paced and never tear.
 static SemaphoreHandle_t te_sem; static volatile int te_n; static volatile int64_t te_t0, te_t1; static int te_to, te_wait_us;
-static void IRAM_ATTR te_isr(void*){ int64_t t=esp_timer_get_time(); if(!te_n) te_t0=t; te_t1=t; te_n++; BaseType_t w=pdFALSE; xSemaphoreGiveFromISR(te_sem,&w); if(w) portYIELD_FROM_ISR(); }
+static void IRAM_ATTR te_isr(void*){ int64_t t=esp_timer_get_time(); if(!te_n) te_t0=t; te_t1=t; te_n=te_n+1; BaseType_t w=pdFALSE; xSemaphoreGiveFromISR(te_sem,&w); if(w) portYIELD_FROM_ISR(); }
 static void sl_vsync(){ if(!te_n) return; int64_t t=now_us();   // no TE edge seen yet (wiring / panel off): never stall
   xSemaphoreTake(te_sem,0); if(xSemaphoreTake(te_sem,pdMS_TO_TICKS(40))!=pdTRUE) te_to++; te_wait_us+=(int)(now_us()-t); }
 static bool te_init(){ te_sem=xSemaphoreCreateBinary(); if(!te_sem) return false;
@@ -322,8 +322,10 @@ static void render(){
 }
 static void refresh(){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return; render(); }
 // BLE host task -> copy -> main task (under the display lock) -> model -> UI
+extern "C" bool gw_bg_rx(const uint8_t* d,int n);
 extern "C" void gw_on_write(const uint8_t* d,uint16_t n){
   if(!n) return;
+  if(gw_bg_rx(d,n)) return;   // 2.6.35: background photo frames: no UI copy per chunk
   if(GW_RX_LOG){ int i=0; while(i+3<=n){ int l=d[i+1]|d[i+2]<<8; if(d[i]!=0x20) ESP_LOGI(TAG,"rx type=%02x len=%d",d[i],l); i+=3+l; } }
   std::string buf((const char*)d,n);
   Application::GetInstance().Schedule([buf](){ DisplayLockGuard g(Board::GetInstance().GetDisplay()); if(!g) return;

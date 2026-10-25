@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -39,6 +40,9 @@ private val Num = FontFamily.Default
 
 class MainActivity : ComponentActivity() {
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { LinkService.start(this); tick++ }
+    private val pickBg = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) Thread {
+        val ok = try { WatchBg.send(WatchBg.pixels(this, uri)) } catch (e: Exception) { false }
+        runOnUiThread { android.widget.Toast.makeText(this, if (ok) "已发送到手表" else "发送失败，请保持手表连接后重试", android.widget.Toast.LENGTH_SHORT).show() } }.start() }
     private var tick by mutableIntStateOf(0)
     override fun onResume() { super.onResume(); tick++ }
     override fun onCreate(s: Bundle?) {
@@ -82,6 +86,14 @@ class MainActivity : ComponentActivity() {
                 Sep(); Toggle("读取导航界面（无障碍）", "只读高德 / Google 地图导航页上的文字，不点击、不记录位置；有数据时优先于通知", p.getBoolean("nav_a11y", true)) { p.edit().putBoolean("nav_a11y", it).apply() }
                 Sep(); Toggle("消息通知", "微信、短信等普通通知", p.getBoolean("notify", true)) { p.edit().putBoolean("notify", it).apply() }
                 Sep(); Toggle("车速", "手机 GPS，每秒一次", p.getBoolean("speed", true)) { p.edit().putBoolean("speed", it).apply() }
+            }
+            Spacer(Modifier.height(24.dp)); Section("表盘")
+            val bgp by WatchBg.progress.collectAsStateWithLifecycle()
+            Card {
+                Action("更换背景图片", if (bgp >= 0) "正在发送 $bgp %" else "从相册选一张，居中裁成圆形表盘，约 20 秒传完") {
+                    if (link != Link.CONNECTED) android.widget.Toast.makeText(this@MainActivity, "手表未连接", android.widget.Toast.LENGTH_SHORT).show()
+                    else if (bgp < 0) pickBg.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                Sep(); Action("恢复纯黑背景", "去掉表盘背景图") { WatchBg.clear() }
             }
             Spacer(Modifier.height(24.dp)); Section("调试")
             Card {

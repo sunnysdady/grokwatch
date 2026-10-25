@@ -32,6 +32,7 @@ void gw_faces_set_sec_hook(void (*h)(int));  // 2.6.17: called on every second-h
 void gw_standby_set_tap(void (*cb)(void));   // 2.6.17: tap on the standby clock -> wake           // 2.6.14: wall-clock second tick (call every ~50 ms)
 void gw_faces_set_fallback(const lv_font_t* f); // full CJK font for characters outside the built-in set
 void gw_faces_show(int page, const gw_state_t* st);
+void gw_faces_set_bg(const void* rgb565);  // 2.6.35: 466x466 RGB565 face background (NULL = black); pointer must stay valid
 #define GW_SLIDE_PX 140
 #define GW_SLIDE_MS 240
 int  gw_faces_page_x(void);         // x offset of the current page (test hook: >0 entering from right)

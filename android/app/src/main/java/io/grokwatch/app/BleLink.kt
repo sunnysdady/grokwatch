@@ -63,11 +63,14 @@ class BleLink(private val ctx: Context, private val onReady: () -> Unit) {
     }
     fun send(f: ByteArray) { if (Hub.link.value != Link.CONNECTED) return
         synchronized(q) { if (q.size > 40) q.poll(); q.add(f) }; h.post { pump(false) } }
+    fun pending() = synchronized(q) { q.size }
+    fun fast(on: Boolean) { gatt?.requestConnectionPriority(if (on) BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED) }
     private fun pump(done: Boolean) {
         val g = gatt ?: return; val c = rx ?: return
         val f: ByteArray
         synchronized(q) { if (done) busy = false; if (busy) return; f = q.poll() ?: return; busy = true }
-        val rc = g.writeCharacteristic(c, f, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        val wt = if (f[0] == Proto.BG_DATA.toByte()) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT   // bulk photo: no ATT round trip per chunk
+        val rc = g.writeCharacteristic(c, f, wt)
         if (rc != BluetoothStatusCodes.SUCCESS) { synchronized(q) { busy = false; q.addFirst(f) }; h.postDelayed({ pump(false) }, 60) }
         else Hub.sent.value++
     }
