@@ -517,16 +517,19 @@ void gw_faces_show(int page, const gw_state_t* s){
 
 // ---------------------------------------------------------------------------------------------
 // Standby clock (screen idle): hours over minutes, vector-drawn rounded digits (no font asset),
-// 26 px round-capped strokes, tabular. Day: pale mint #E8EFC4; night: col() dims it to warm white.
+// 24 px round-capped strokes on split flip cards (2.6.36), tabular. Day: pale mint #E8EFC4; night: col() dims it to warm white.
 // Fits the 215 px safe radius of the 466 round panel. Anti burn-in: whole block steps along an
-// 8-point +-6 px orbit once per minute. Motion: 280 ms ease-out fade on enter, 200 ms re-light on minute change.
+// 8-point +-6 px orbit once per minute. Motion: 280 ms ease-out fade on enter, 520 ms card flip on minute change.
 #include <math.h>
 #define SB_H 1.30f                     /* digit centre-line box: 1 wide x SB_H tall */
-#define SB_DW 118
-#define SB_DH 160
-#define SB_SW 26
-#define SB_GX 12
-#define SB_GY 16
+#define SB_DW 108
+#define SB_DH 134
+#define SB_SW 24
+#define SB_GX 10
+#define SB_GY 12
+#define SB_PAD 12                      /* 2.6.36 flip clock: glyph inset inside its card */
+#define SB_CW (SB_DW+2*SB_PAD)
+#define SB_CH (SB_DH+2*SB_PAD)
 typedef struct { char t; float a,b,c,d,e; } sb_prim;   /* 'L' x1 y1 x2 y2 | 'A' cx cy r a0 a1 (deg, 0=3 o'clock, clockwise) */
 static sb_prim sb_g[10][5]; static bool sb_ready=false;
 static float sb_tangent(float cx,float cy,float r,float px,float py,int side){ /* angle (deg) of the tangent point seen from P */
@@ -553,18 +556,36 @@ static void sb_setup(void){
   sb_prim g9[]={{'A',.5,.5,.5,0,360},{'L',x9,y9,.38,H},{0}};
   sb_prim* all[10]={g0,g1,g2,g3,g4,g5,g6,g7,g8,g9};
   for(int d=0;d<10;d++){ for(k=0;all[d][k].t;k++) sb_g[d][k]=all[d][k]; sb_g[d][k].t=0; } sb_ready=true; }
-static lv_obj_t *sb; static char sb_txt[5]="0000"; static int sb_ox=0, sb_oy=0;
+static lv_obj_t *sb; static char sb_txt[5]="0000", sb_old[5]="0000"; static int sb_ox=0, sb_oy=0, sb_fp=1000;   /* flip progress 0..1000 */
 static void sb_glyph(lv_layer_t* L,int dg,float x,float y,lv_color_t c,lv_opa_t opa){
   lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld); ld.color=c; ld.width=SB_SW; ld.round_start=ld.round_end=1; ld.opa=opa;
   lv_draw_arc_dsc_t ad; lv_draw_arc_dsc_init(&ad); ad.color=c; ad.width=SB_SW; ad.rounded=1; ad.opa=opa;
-  float sx=SB_DW-SB_SW, sy=(SB_DH-SB_SW)/SB_H, s=sx<sy?sx:sy, ox=x+SB_SW/2.f+(SB_DW-SB_SW-s)/2, oy=y+SB_SW/2.f;
+  float sx=SB_DW-SB_SW, sy=(SB_DH-SB_SW)/SB_H, s=sx<sy?sx:sy, ox=x+SB_SW/2.f+(SB_DW-SB_SW-s)/2, oy=y+SB_SW/2.f+(SB_DH-SB_SW-s*SB_H)/2;
   for(int i=0;sb_g[dg][i].t;i++){ const sb_prim* q=&sb_g[dg][i];
     if(q->t=='L'){ ld.p1.x=ox+q->a*s; ld.p1.y=oy+q->b*s; ld.p2.x=ox+q->c*s; ld.p2.y=oy+q->d*s; lv_draw_line(L,&ld); }
     else { ad.center.x=ox+q->a*s; ad.center.y=oy+q->b*s; ad.radius=(uint16_t)(q->c*s+SB_SW/2.f); ad.start_angle=q->d; ad.end_angle=q->e; lv_draw_arc(L,&ad); } } }
+// 2.6.36 flip clock: each digit on a split card. A changed digit flips: the old top half folds down onto the hinge
+// (new top shows behind it), then the new bottom half unfolds over the old bottom. Fold = clip toward the hinge.
+static void sb_card(lv_layer_t* L,int dg,float x,float y,int c1,int c2,lv_opa_t opa,lv_opa_t shade){
+  lv_area_t keep=L->_clip_area, ca={LV_MAX(keep.x1,(int)x),LV_MAX(keep.y1,c1),LV_MIN(keep.x2,(int)x+SB_CW-1),LV_MIN(keep.y2,c2-1)};
+  if(ca.x1>ca.x2||ca.y1>ca.y2) return; L->_clip_area=ca;
+  lv_draw_rect_dsc_t r; lv_draw_rect_dsc_init(&r); r.radius=16; r.bg_color=col(0x1C1E1B); r.bg_opa=opa;
+  lv_area_t card={(int)x,(int)y,(int)x+SB_CW-1,(int)y+SB_CH-1}; lv_draw_rect(L,&r,&card);
+  sb_glyph(L,dg,x+SB_PAD,y+SB_PAD,col(0xE8EFC4),opa);
+  if(shade){ r.bg_color=lv_color_black(); r.bg_opa=(lv_opa_t)(shade*opa/255); lv_draw_rect(L,&r,&card); }
+  L->_clip_area=keep; }
 static void sb_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area_t a; lv_obj_get_coords(sb,&a);
-  float cx=(a.x1+a.x2)/2.f+sb_ox, cy=(a.y1+a.y2)/2.f+sb_oy, x0=cx-(2*SB_DW+SB_GX)/2.f, y0=cy-(2*SB_DH+SB_GY)/2.f;
-  lv_color_t c=col(0xE8EFC4); lv_opa_t opa=lv_obj_get_style_opa_recursive(sb,0);
-  for(int r=0;r<2;r++) for(int k=0;k<2;k++) sb_glyph(L,sb_txt[r*2+k]-'0',x0+k*(SB_DW+SB_GX),y0+r*(SB_DH+SB_GY),c,opa); }
+  float cx=(a.x1+a.x2)/2.f+sb_ox, cy=(a.y1+a.y2)/2.f+sb_oy, x0=cx-(2*SB_CW+SB_GX)/2.f, y0=cy-(2*SB_CH+SB_GY)/2.f;
+  lv_opa_t opa=lv_obj_get_style_opa_recursive(sb,0); int h=SB_CH/2;
+  for(int i=0;i<4;i++){ float x=x0+(i&1)*(SB_CW+SB_GX), y=y0+(i>>1)*(SB_CH+SB_GY); int top=(int)y, hy=top+h, bot=top+SB_CH;
+    int dn=sb_txt[i]-'0', dold=sb_old[i]-'0';
+    if(dn==dold||sb_fp>=1000){ sb_card(L,dn,x,y,top,bot,opa,0); }
+    else { sb_card(L,dn,x,y,top,hy,opa,0); sb_card(L,dold,x,y,hy,bot,opa,0);
+      if(sb_fp<500) sb_card(L,dold,x,y,hy-h*(500-sb_fp)/500,hy,opa,(lv_opa_t)(sb_fp*140/500));      // old top folding down, darkening
+      else          sb_card(L,dn,x,y,hy,hy+h*(sb_fp-500)/500,opa,(lv_opa_t)((1000-sb_fp)*140/500)); }  // new bottom unfolding, lightening
+    lv_draw_rect_dsc_t g; lv_draw_rect_dsc_init(&g); g.bg_color=lv_color_black(); g.bg_opa=LV_OPA_COVER;   // hinge gap
+    lv_area_t ga={(int)x,hy-2,(int)x+SB_CW-1,hy+1}; lv_draw_rect(L,&g,&ga); } }
+static void sb_flip_cb(void* o,int32_t v){ (void)o; sb_fp=v; if(sb) lv_obj_invalidate(sb); }
 static const signed char sb_orbit[8][2]={{0,0},{5,-3},{6,3},{2,6},{-3,5},{-6,1},{-5,-4},{-1,-6}};
 void gw_standby_create(lv_obj_t* parent){ if(!sb_ready) sb_setup();
   sb=lv_obj_create(parent); lv_obj_remove_style_all(sb); lv_obj_set_size(sb,466,466); lv_obj_center(sb);
@@ -590,6 +611,8 @@ void gw_standby_show(bool on){ if(!sb) return; lv_anim_delete(sb,sb_opa);
   lv_anim_set_duration(&a,220); lv_anim_set_path_cb(&a,lv_anim_path_ease_in); lv_anim_set_completed_cb(&a,sb_out_done); lv_anim_start(&a); }
 void gw_standby_set(int hh,int mm,uint32_t minute_count){
   if(!sb) return; char b[5]={(char)('0'+(hh/10)%10),(char)('0'+hh%10),(char)('0'+(mm/10)%10),(char)('0'+mm%10),0}; if(hh<0||mm<0) return;
-  bool changed=strcmp(b,sb_txt)!=0; memcpy(sb_txt,b,5);
+  bool changed=strcmp(b,sb_txt)!=0; if(changed) memcpy(sb_old,sb_txt,5); memcpy(sb_txt,b,5);
   const signed char* o=sb_orbit[minute_count%8]; sb_ox=o[0]; sb_oy=o[1];
-  if(changed&&gw_standby_is_on()) sb_fade(LV_OPA_40,200); lv_obj_invalidate(sb); }
+  if(changed&&gw_standby_is_on()){ lv_anim_t f; lv_anim_init(&f); lv_anim_set_var(&f,&sb_fp); lv_anim_set_exec_cb(&f,sb_flip_cb);
+    lv_anim_set_values(&f,0,1000); lv_anim_set_duration(&f,520); lv_anim_set_path_cb(&f,lv_anim_path_ease_in_out); sb_fp=0; lv_anim_start(&f); }
+  else { memcpy(sb_old,b,5); sb_fp=1000; } lv_obj_invalidate(sb); }

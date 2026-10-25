@@ -170,8 +170,9 @@ static int sb_ev(sb_event_t ev,const char* why){ if(!sbm_init){ gw_sbsm_init(&sb
   int a=gw_sbsm_event(&sbm,ev,&c,ms_now()); sb_exec(a&~SB_A_PASS,why); return a; }
 static void tick_cb(lv_timer_t*){ gw_health_ui_beat(); standby_tick(); sb_ev(SB_EV_TICK,"idle"); bool b=linked(); int ev=gw_model_tick(now_us()); if(ev&GW_EV_NAV_END) ESP_LOGW(TAG,"nav stale 20s -> idle");
   if(page<=2 || b!=last_ble || page==GW_PAGE_NAV || ev) render(); last_ble=b; }
+static bool wake_touch=false;   // 2.6.36: the touch that woke standby; its slide/swipe must not change the page
 static void gesture_cb(lv_event_t*){
-  if(drag_used) return;   // this touch is a finger-following slide
+  if(drag_used||wake_touch) return;   // this touch is a finger-following slide, or the waking touch
   lv_dir_t d=lv_indev_get_gesture_dir(lv_indev_active()); last_gesture=now_us();
   if(touch_log) ESP_LOGW(TAG,"touch gesture dir=%s page=%d -> %s",d==LV_DIR_LEFT?"L":d==LV_DIR_RIGHT?"R":d==LV_DIR_TOP?"U":d==LV_DIR_BOTTOM?"D":"?",page,
     gw_cc_is_open()?"close_cc":gw_faces_sheet_open()?"close_sheet":(d==LV_DIR_LEFT||d==LV_DIR_RIGHT)?"page":d==LV_DIR_TOP?"open_cc":"none");
@@ -200,7 +201,7 @@ static void longpress_cb(lv_event_t* e){ if(lv_event_get_target(e)!=lv_screen_ac
 static int drag_from=-1, drag_dir=0; static int64_t dv_t[6]; static int dv_x[6], dv_n=0;
 static void drag_move(lv_point_t p){ int dx=p.x-down_pt.x, dy=p.y-down_pt.y; int64_t t=now_us(); dv_t[dv_n%6]=t; dv_x[dv_n%6]=p.x; dv_n++;
   if(gw_slide_dragging()){ gw_slide_drag_to(dx); return; }
-  if(drag_used||standby||!built||gw_cc_is_open()||gw_faces_sheet_open()) return;
+  if(drag_used||wake_touch||standby||!built||gw_cc_is_open()||gw_faces_sheet_open()) return;
   if(abs(dx)<14||abs(dx)<2*abs(dy)) return;
   drag_used=true; if(!gw_slide_can_drag()) { drag_used=false; return; }   // no snapshot: LVGL's swipe gesture handles it
   drag_dir=dx<0?1:-1; drag_from=page; last_gesture=t; page=((page+drag_dir)%NPAGES+NPAGES)%NPAGES; page_us=t; gw_faces_dir(drag_dir);
@@ -215,7 +216,7 @@ static void drag_release(){ if(!gw_slide_dragging()) return; int64_t t=now_us();
 static void indev_cb(lv_event_t* e){ lv_event_code_t c=lv_event_get_code(e); lv_indev_t* id=(lv_indev_t*)lv_event_get_target(e); lv_point_t p; lv_indev_get_point(id,&p);
   if(c==LV_EVENT_PRESSING){ drag_move(p); return; }
   if(c==LV_EVENT_PRESSED){ down_us=now_us(); down_pt=p; drag_used=false; dv_n=0; if(!standby) sb_ev(SB_EV_ACTIVITY,"touch"); if(built&&!standby&&!gw_slide_active()) gw_slide_prepare(); if(touch_log) ESP_LOGW(TAG,"touch down %d,%d page=%d",(int)p.x,(int)p.y,page); }
-  else if(c==LV_EVENT_RELEASED){ drag_release(); if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
+  else if(c==LV_EVENT_RELEASED){ drag_release(); wake_touch=false; if(touch_log) ESP_LOGW(TAG,"touch up %d,%d after %lld ms",(int)p.x,(int)p.y,(long long)((now_us()-down_us)/1000)); } }
 // P0 (2.6.4 crash): F20/F21 keep a raw .fallback to the theme text font. LvglBuiltInFont owns a heap COPY of the
 // builtin font and SetTextFont() frees it after the assets font loads -> dangling fallback -> InstrFetchProhibited in
 // lv_font_get_glyph_width. Re-point the fallback whenever the theme font changes (runs under the display lock,
@@ -292,7 +293,7 @@ static void build_ui(){
   lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);
   if(touch_indev){ lv_indev_set_long_press_time(touch_indev,GW_CHAT_MIN_PRESS_US/1000); lv_indev_add_event_cb(touch_indev,indev_cb,LV_EVENT_ALL,nullptr); }
-  gw_standby_create(lv_layer_top()); gw_standby_set_tap([](){ sb_ev(SB_EV_TOUCH,"touch"); });   // standby layer eats the waking touch
+  gw_standby_create(lv_layer_top()); gw_standby_set_tap([](){ if(sb_ev(SB_EV_TOUCH,"touch")&SB_A_SWALLOW) wake_touch=true; });   // standby layer eats the waking touch
   gw_faces_set_sec_hook(on_sec_move);
   lv_timer_create(tick_cb,1000,nullptr); lv_timer_create(sec_cb,50,nullptr); built=true;
   // 2.6.15: esp_lvgl_port runs taskLVGL at priority 1 (core 1) while audio_afe (wake word, prio 3, unpinned), opus (2),
