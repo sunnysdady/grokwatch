@@ -47,21 +47,22 @@ static void compose(uint8_t* dst,int y0,int n,int x_new,int x_old){ int nl=x_new
     if(nr>nl) memcpy(d+nl*2,m_new+o+(size_t)(nl-x_new)*2,(size_t)(nr-nl)*2);
     seg(d,m_old+o,0,nl,x_old); seg(d,m_old+o,nr,W,x_old); } }
 
-// ---- cover transition: the new page covers the old one, which parallaxes and dims. Pages are extended past their
-// round outline by repeating the rim pixel, so a sliding page is full-bleed (no round card edge, no black between pages).
+// ---- cover transition: the new page is its own round card that slides over the old page (which parallaxes). Only the
+// card's chord is composed (memcpy spans, no per-pixel clamp), with a short edge shadow on the old page.
 #include <math.h>
 static int s_style=1;   // 0 = legacy compose (disc cards), 1 = cover
 void gw_slide_set_style(int s){ s_style=s; }
 static uint16_t dim(uint16_t c,int a){ return (uint16_t)((((c>>11)&31)*a>>5)<<11 | (((c>>5)&63)*a>>5)<<5 | ((c&31)*a>>5)); }
-static void fill16(uint16_t* d,int n,uint16_t v){ while(n-->0) *d++=v; }
+#define SHADOW 10   // px of soft shade the new page casts on the old one
+static int16_t s_lo[W];
 static void compose_style(uint8_t* dst,int y0,int n,float q){
-  int xn=s_dir*(int)(W*(1.f-q)+0.5f), xo=-s_dir*(int)(GW_SLIDE_PARALLAX*q+0.5f), da=32-(int)(14*q+0.5f);
-  for(int r=0;r<n;r++){ int y=y0+r; float dy=y+0.5f-W/2.0f, h2=233.f*233.f-dy*dy; int hc=h2>0?(int)sqrtf(h2):0, lo=W/2-hc, hi=W/2+hc-1; if(hi<lo) hi=lo;
-    uint16_t* d=(uint16_t*)(dst+(size_t)r*W*2); const uint16_t* pn=(const uint16_t*)m_new+(size_t)y*W; const uint16_t* po=(const uint16_t*)m_old+(size_t)y*W;
-    int nl=xn>0?xn:0, nr=xn+W<W?xn+W:W;   // new page covers [nl,nr)
-    for(int x=0;x<nl;x++){ int sx=x-xo; sx=sx<lo?lo:sx>hi?hi:sx; d[x]=dim(po[sx],da); }
-    for(int x=nr;x<W;x++){ int sx=x-xo; sx=sx<lo?lo:sx>hi?hi:sx; d[x]=dim(po[sx],da); }
-    for(int x=nl;x<nr;x++){ int sx=x-xn; d[x]=pn[sx<lo?lo:sx>hi?hi:sx]; } } }
+  if(!s_lo[0]) for(int y=0;y<W;y++){ float dy=y+0.5f-W/2.0f, h2=233.f*233.f-dy*dy; s_lo[y]=(int16_t)(W/2-(h2>0?(int)sqrtf(h2):0)); }
+  int xn=s_dir*(int)(W*(1.f-q)+0.5f), xo=-s_dir*(int)(GW_SLIDE_PARALLAX*q+0.5f);
+  for(int r=0;r<n;r++){ int y=y0+r, lo=s_lo[y], hi=W-1-lo; uint8_t* d=dst+(size_t)r*W*2; size_t o=(size_t)y*W*2;
+    int nl=xn+lo<0?0:xn+lo>W?W:xn+lo, nr=xn+hi+1>W?W:xn+hi+1; if(nr<nl) nr=nl;   // the new page is its own round card: only its chord covers the old page
+    seg(d,m_old+o,0,nl,xo); seg(d,m_old+o,nr,W,xo);
+    if(nr>nl){ memcpy(d+nl*2,m_new+o+(size_t)(nl-xn)*2,(size_t)(nr-nl)*2);
+      uint16_t* p=(uint16_t*)d; for(int k=0;k<SHADOW;k++){ int x=s_dir>0?nl-1-k:nr+k; if(x<0||x>=W) break; p[x]=dim(p[x],32-(SHADOW-k)*14/SHADOW); } } } }
 static int64_t hnow(void){ return hw->now?hw->now():us(); }
 static void run_direct(void){ int64_t t0=hnow(), tf=t0; int fr=0, mx=0, i=0; hw->wait();
   for(;;){ int el=(int)((hnow()-t0)/1000); bool last=el>=GW_SLIDE_DUR; float p=last?1.f:(float)el/GW_SLIDE_DUR, q=p*p*(3.f-2.f*p);   // smoothstep: at ~34 fps a cubic ease-out jumped 126 px in frame 1 and crawled in the last 4 (reads as a pop)
