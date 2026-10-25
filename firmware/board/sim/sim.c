@@ -55,7 +55,7 @@ static int page=1, back_page=1; static bool night=false, dnd=false; static gw_cc
 // fake server-side to-do store (same JSON shape as /gw/todo)
 static int td_n=0, td_open=0, td_state=1; static const char* td_text[GW_TODO_ROWS]; static bool td_done[GW_TODO_ROWS];
 static void todo_tap(int r){ if(r<td_n){ td_done[r]=true; printf("  todo POST /gw/todo/done row=%d\n",r); } }
-static int sim_ss=40, sim_mm=18;
+static int sim_ss=40, sim_mm=18; static int sim_woke=0; static void sim_wake(void){ sim_woke++; gw_standby_show(false); }
 static void render(void){ time_t t0=time(NULL); struct tm t; localtime_r(&t0,&t); (void)t;
   gw_state_t s={.hh=21,.mm=sim_mm,.ss=sim_ss,.mon=10,.day=24,.wday=6,.battery=76,.charging=false,.wifi=true};
   s.ble=gw_model_linked(true,now_us()); s.phone_batt=gw_m.phone_batt; s.ride_km=gw_m.ride_km; s.dnd=dnd;
@@ -237,6 +237,9 @@ int main(int argc,char**argv){
   // 9) Standby clock (day, night, minute drift)
   gw_grok_visible(false); go(1,1); gw_standby_create(lv_layer_top());
   gw_standby_set(10,9,0); gw_standby_show(true); shot("standby");
+  { static int woke=0; gw_standby_set_tap(sim_wake); int p0=page; sim_woke=0; tap(233,233); step(300);
+    printf("AUDIT %s standby tap -> wake cb=%d, page unchanged by fall-through=%d\n",sim_woke==1&&page==p0?"OK":"FAIL",sim_woke,page==p0); (void)woke;
+    gw_standby_show(true); }
   gw_faces_set_night(true); gw_standby_set(10,9,0); shot("standby_night"); gw_faces_set_night(false);
   gw_standby_set(9,41,3); shot("standby_drift_min3");
   gw_standby_set(1,23,0); shot("standby_glyphs_0123"); gw_standby_set(45,67,0); shot("standby_glyphs_4567"); gw_standby_set(89,0,0); shot("standby_glyphs_8900"); gw_standby_show(false);

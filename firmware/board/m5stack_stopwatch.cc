@@ -19,7 +19,7 @@
 
 extern "C" void gw_ble_start(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
-void NavUiSetHaptic(void (*f)(int)); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
+void NavUiSetHaptic(void (*f)(int)); void NavUiSetWake(void (*f)()); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
 void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void);
 #include <esp_timer.h>
 #include "gw_health.h"
@@ -324,6 +324,7 @@ private:
         self_ = this;
         NavUiSetHaptic(&M5StackStopwatchBoard::Haptic);
         NavUiSetChatTap([]() { Application::GetInstance().ToggleChatState(); });
+        NavUiSetWake([]() { self_->WakeScreen(); });   // 2.6.17: tap on the standby clock wakes like a key press
         // Yellow key (G2) = navigation key: click = next page, double = home (watch face), long = volume
         button1_.OnClick([this]() {
             WakeScreen();

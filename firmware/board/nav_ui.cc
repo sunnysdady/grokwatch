@@ -68,6 +68,7 @@ static void frame_cb(lv_event_t*){ nfr++; fr_total++; if(fr_start){ int64_t d=no
 static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   if(fps_log && nfr>3) ESP_LOGW(TAG,"fps=%d frame avg %.1f ms max %.1f ms (%d frames / %.0f ms)",(int)(nfr*1e6/(t-fr_t0)),fr_sum/1e3/nfr,fr_max/1e3,nfr,(t-fr_t0)/1e3);
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }
+static void (*wake_fn)()=nullptr;
 static bool standby=false; static uint32_t sb_min=0; static int sb_last=-1;
 static void standby_tick(){ if(!standby) return; time_t now=time(nullptr); struct tm t; localtime_r(&now,&t);
   if(t.tm_min!=sb_last){ sb_last=t.tm_min; gw_standby_set(t.tm_hour,t.tm_min,sb_min++); } }
@@ -144,23 +145,27 @@ static void ts_snap(bool report, int64_t gap_us){
     ESP_LOGW("GW-STALL","cpu over %lldms: %s",gap_us/1000,b); }
   // re-take so counters are exact for the next delta (the loop above modified ts_now)
   n=uxTaskGetSystemState(ts_prev,TS_MAX,&ts_tot_prev); ts_np=n; }
-static void sec_cb(lv_timer_t*){ int64_t n=now_us();
-  if(sc_cb_last){ int64_t g=n-sc_cb_last; if(g>sc_cb_gap_max) sc_cb_gap_max=g; } sc_cb_last=n;
-  if(page!=GW_PAGE_FACE){ sc_last=0; sc_prev=-1; return; }
-  struct timeval tv; gettimeofday(&tv,nullptr); struct tm t; time_t s=tv.tv_sec; localtime_r(&s,&t);
-  int64_t skew=(int64_t)tv.tv_sec*1000000+tv.tv_usec-n;
-  if(!gw_faces_sec(t.tm_sec)) return;
+// 2.6.17: one move record for both paths (50 ms poll and the 1 s render()) -- 2.6.16 counted only the poll path, so a
+// move made by render() showed up as a fake gap + skip.
+static int64_t sc_skew_now;
+static void on_sec_move(int ss){ if(page!=GW_PAGE_FACE) return; int64_t n=now_us();
   bool stall=false; int64_t d=0;
   if(sc_last){ d=n-sc_last; sc_sum+=d; sc_n++; if(d>sc_max) sc_max=d; if(d<sc_min) sc_min=d; if(d>1100000){ sc_late++; stall=true; }
-    bool sk=sc_prev>=0 && t.tm_sec!=(sc_prev+1)%60; if(sk) sc_skip++;
+    bool sk=sc_prev>=0 && ss!=(sc_prev+1)%60; if(sk) sc_skip++;
     if(stall||sk){ sc_stalls++;
       ESP_LOGW("GW-STALL","#%u gap=%lldms ss %d->%d page=%d lvloop_max=%lldms clockstep=%lldms state=%d ble_rx=%llds_ago wifi=%d int=%u",
-        (unsigned)sc_stalls,d/1000,sc_prev,t.tm_sec,page,sc_cb_gap_max/1000,(skew-sc_skew0)/1000,(int)Application::GetInstance().GetDeviceState(),
+        (unsigned)sc_stalls,d/1000,sc_prev,ss,page,sc_cb_gap_max/1000,sc_skew0?(sc_skew_now-sc_skew0)/1000:0,(int)Application::GetInstance().GetDeviceState(),
         gw_m.last_rx?(long long)((n-gw_m.last_rx)/1000000):-1LL,(int)WifiManager::GetInstance().IsConnected(),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)); }
     if(sc_n>=60){ ESP_LOGW("GW-SEC","n=%u avg=%lldms min=%lldms max=%lldms late>1.1s=%u skipped=%u",(unsigned)sc_n,sc_sum/sc_n/1000,sc_min/1000,sc_max/1000,(unsigned)sc_late,(unsigned)sc_skip);
       sc_n=0; sc_sum=0; sc_max=0; sc_min=INT64_MAX; sc_late=0; sc_skip=0; } }
   ts_snap(stall,d);
-  sc_last=n; sc_prev=t.tm_sec; sc_skew0=skew; sc_cb_gap_max=0; }
+  sc_last=n; sc_prev=ss; sc_skew0=sc_skew_now; sc_cb_gap_max=0; }
+static void sec_cb(lv_timer_t*){ int64_t n=now_us();
+  if(sc_cb_last){ int64_t g=n-sc_cb_last; if(g>sc_cb_gap_max) sc_cb_gap_max=g; } sc_cb_last=n;
+  if(page!=GW_PAGE_FACE){ sc_last=0; sc_prev=-1; return; }
+  struct timeval tv; gettimeofday(&tv,nullptr); struct tm t; time_t s=tv.tv_sec; localtime_r(&s,&t);
+  sc_skew_now=(int64_t)tv.tv_sec*1000000+tv.tv_usec-n;
+  gw_faces_sec(t.tm_sec); }
 static void build_ui(){
   lv_obj_t* scr=lv_screen_active();
   { Settings s("gw",false); night=s.GetInt("night",0); dnd=s.GetInt("dnd",0); }
@@ -170,7 +175,8 @@ static void build_ui(){
   lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,nullptr); lv_obj_add_event_cb(scr,click_cb,LV_EVENT_CLICKED,nullptr); lv_obj_add_event_cb(scr,longpress_cb,LV_EVENT_LONG_PRESSED,nullptr);
   if(touch_indev){ lv_indev_set_long_press_time(touch_indev,GW_CHAT_MIN_PRESS_US/1000); lv_indev_add_event_cb(touch_indev,indev_cb,LV_EVENT_ALL,nullptr); }
-  gw_standby_create(lv_layer_top());
+  gw_standby_create(lv_layer_top()); gw_standby_set_tap([](){ ESP_LOGW(TAG,"standby tap -> wake"); if(wake_fn) wake_fn(); });
+  gw_faces_set_sec_hook(on_sec_move);
   lv_timer_create(tick_cb,1000,nullptr); lv_timer_create(sec_cb,50,nullptr); built=true;
   // 2.6.15: esp_lvgl_port runs taskLVGL at priority 1 (core 1) while audio_afe (wake word, prio 3, unpinned), opus (2),
   // activation (2) and wifi compete for the same core -> LVGL starves for seconds. Run it at 3: time-sliced with the AFE,
@@ -210,6 +216,7 @@ void NavUiNext(){ NavUiToggle(); }
 void NavUiHome(){ sched([](){ gw_cc_open(nullptr,nullptr); gw_faces_sheet(nullptr,nullptr); if(page!=1) go(1,-1); }); }
 void NavUiShowChat(){ if(page!=0) sched([](){ go(0,-1); }); }
 void NavUiSetHaptic(void (*f)(int)){ haptic=f; }
+void NavUiSetWake(void (*f)()){ wake_fn=f; }   // 2.6.17: board wake (backlight + PowerSaveTimer::WakeUp)
 void NavUiSetChatTap(void (*f)()){ chat_tap=f; }
 bool NavUiPowerPending(){ return power_pending; }
 void NavUiPowerMenu(bool show){ power_pending=show; sched([show](){ if(show){ gw_faces_sheet("关机？","按 蓝键 确认关机\n按 黄键 取消"); if(haptic) haptic(60);} else gw_faces_sheet(nullptr,nullptr); }); }

@@ -425,9 +425,12 @@ static void fade_show(lv_obj_t* o,bool on,bool* st){ if(on==*st) return; *st=on;
 // 2.6.14 second hand: one tick per real second + 180 ms ease-out (Apple style). Driven by a 50 ms wall-clock poll, not by a
 // 1000 ms LVGL timer (that one beat against the second boundary: same second twice = stall, then +2 s = hard jump).
 // Always animates from the on-screen angle, so a late frame or a missed second never snaps. Returns 1 if the hand moved.
+static void (*sec_hook)(int);
+void gw_faces_set_sec_hook(void (*h)(int)){ sec_hook=h; }
 int gw_faces_sec(int ss){ if(cur!=GW_PAGE_FACE||!f_hands||ss==f_ss||ss<0||ss>59) return 0;
-  float to=ss*6.f; if(f_ss<0||f_sa<0){ f_ss=ss; sec_inval(f_sa); f_sa=to; sec_inval(f_sa); return 1; }
+  float to=ss*6.f; if(f_ss<0||f_sa<0){ f_ss=ss; sec_inval(f_sa); f_sa=to; sec_inval(f_sa); if(sec_hook) sec_hook(ss); return 1; }
   f_ss=ss; lv_anim_delete(&f_sa,ax_sec); float d=to-f_sa; while(d<0) d+=360.f; while(d>=360.f) d-=360.f;
+  if(sec_hook) sec_hook(ss);
   if(d>90.f){ sec_inval(f_sa); f_sa=to; sec_inval(f_sa); return 1; }   // clock set / resume: place, don't spin
   s_from=f_sa; s_span=d; anim(&f_sa,ax_sec,0,1000,180,0,lv_anim_path_ease_out); return 1; }
 void gw_faces_show(int page, const gw_state_t* s){
@@ -588,7 +591,13 @@ bool gw_standby_is_on(void){ return sb&&!lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN);
 static void sb_opa(void* o,int32_t v){ lv_obj_set_style_opa((lv_obj_t*)o,(lv_opa_t)v,0); }
 static void sb_fade(int from,int ms){ lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,sb); lv_anim_set_exec_cb(&a,sb_opa);
   lv_anim_set_values(&a,from,LV_OPA_COVER); lv_anim_set_duration(&a,ms); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
-void gw_standby_show(bool on){ if(!sb) return; if(on){ lv_obj_remove_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sb); sb_fade(0,280); } else lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); }
+// 2.6.17: touch never woke the standby clock (only the keys called PowerSaveTimer::WakeUp). While shown, the standby
+// layer is clickable: it swallows the tap (no click falls through to the page underneath) and asks the board to wake.
+static void (*sb_tap)(void);
+static void sb_press(lv_event_t* e){ (void)e; if(sb_tap) sb_tap(); }
+void gw_standby_set_tap(void (*cb)(void)){ sb_tap=cb; if(sb) lv_obj_add_event_cb(sb,sb_press,LV_EVENT_PRESSED,NULL); }
+void gw_standby_show(bool on){ if(!sb) return; if(on) lv_obj_add_flag(sb,LV_OBJ_FLAG_CLICKABLE); else lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE);
+  if(on){ lv_obj_remove_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sb); sb_fade(0,280); } else lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); }
 void gw_standby_set(int hh,int mm,uint32_t minute_count){
   if(!sb) return; char b[5]={(char)('0'+(hh/10)%10),(char)('0'+hh%10),(char)('0'+(mm/10)%10),(char)('0'+mm%10),0}; if(hh<0||mm<0) return;
   bool changed=strcmp(b,sb_txt)!=0; memcpy(sb_txt,b,5);
