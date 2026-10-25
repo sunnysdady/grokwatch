@@ -25,13 +25,14 @@ static void indev_read(lv_indev_t* i,lv_indev_data_t* data){ (void)i; data->poin
 static double now_ms(void);
 static double st_ms_sum=0, st_ms_max=0; static int st_n=0;
 static void step(int ms){ for(int t=0;t<ms;t+=10){ tick+=10; double a=now_ms(); lv_timer_handler(); double e=now_ms()-a; st_ms_sum+=e; if(e>st_ms_max) st_ms_max=e; st_n++; } }
-static int gif_n=0; static long gf_px=0; static int gf_cnt=0; static void perf(const char* name);
+static int gif_n=0; static long gf_px=0; static int gf_cnt=0, refr_n=0;   // refr_n: real refreshes (timer + forced) since last gif frame static void perf(const char* name);
 static double fr_ms_sum=0, fr_ms_max=0; static int fr_n=0;
 static double now_ms(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return t.tv_sec*1e3+t.tv_nsec/1e6; }
+static void refr_cb(lv_event_t* e){ (void)e; refr_n++; }
 static void frame(void){ double a=now_ms(); lv_refr_now(d); double e=now_ms()-a; fr_ms_sum+=e; if(e>fr_ms_max) fr_ms_max=e; fr_n++; }
 // Host numbers are NOT device numbers. Device estimate = dirty bytes over QSPI (pclk 40 MHz x4 lines = 20 MB/s, RGB565).
 static void perf(const char* name){ double dirty=(double)gf_px/gf_cnt; double spi_ms=dirty*2/20e6*1e3;
-  printf("PERF %s: dirty %.1f%%/frame, host lv_timer_handler avg %.3f ms max %.3f ms, est. QSPI transfer %.1f ms/frame (<= %.0f fps transfer-bound)\n",
+  printf("PERF %s: dirty %.1f%%/refresh, host lv_timer_handler avg %.3f ms max %.3f ms, est. QSPI transfer %.1f ms/frame (<= %.0f fps transfer-bound)\n",
     name,100.0*dirty/(W*W),st_ms_sum/st_n,st_ms_max,spi_ms,1000.0/spi_ms); gf_px=gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0; }
 // ---- glyph audit: every visible label, every code point, must exist in its font (or fallback)
 static uint32_t u8next(const char* t,uint32_t* i){ const unsigned char* s=(const unsigned char*)t+*i; uint32_t c=s[0]; int n=1;
@@ -44,7 +45,7 @@ static void audit(lv_obj_t* o,const char* shot){
   for(uint32_t k=0;k<lv_obj_get_child_count(o);k++) audit(lv_obj_get_child(o,k),shot); }
 static void shot(const char* name){ step(300); frame(); char p[256]; snprintf(p,sizeof p,"%s/%02d_%s.ppm",OUT,++shot_n,name); save_ppm(p);
   audit(lv_screen_active(),name); audit(lv_layer_top(),name); printf("shot %s\n",p); }
-static void gif_frame(const char* tag){ frame(); gf_px+=flushed; flushed=0; gf_cnt++; char p[256]; snprintf(p,sizeof p,"%s/gif_%s_%03d.ppm",OUT,tag,gif_n++); save_ppm(p); }
+static void gif_frame(const char* tag){ frame(); gf_px+=flushed; flushed=0; gf_cnt+=refr_n?refr_n:1; refr_n=0; char p[256]; snprintf(p,sizeof p,"%s/gif_%s_%03d.ppm",OUT,tag,gif_n++); save_ppm(p); }
 static void drag(int x0,int y0,int x1,int y1,int ms){ px_=x0;py_=y0;pressed=true; step(30); int n=ms/10; for(int i=1;i<=n;i++){ px_=x0+(x1-x0)*i/n; py_=y0+(y1-y0)*i/n; step(10);} pressed=false; step(40); }
 static void tap(int x,int y){ px_=x;py_=y;pressed=true; step(60); pressed=false; step(400); }
 #define SWIPE_LEFT()  drag(380,233,90,233,120)
@@ -111,7 +112,7 @@ static void nav_on(int on){ uint8_t p[1]={on}; rx(0x10,p,1); }
 static void icon_left(void){ uint8_t ic[288]={0}; for(int y=0;y<48;y++)for(int x=0;x<48;x++){ int on=0; if(x>=28&&x<36&&y>=18&&y<44) on=1; if(y>=14&&y<22&&x>=14&&x<36) on=1; if(x>=4&&x<18&&abs(y-18)<=(x-4)) on=1;
     if(on) ic[(y*48+x)/8]|=0x80>>((y*48+x)%8);} for(int part=0;part<3;part++){ uint8_t p[97]; p[0]=part; memcpy(p+1,ic+96*part,96); rx(0x12,p,97);} }
 // ---- 2.6.24: snapshot slide frames + GrokBot page (day / night) -> a24_* files
-static void slide_gif(const char* tag,int to,int dd){ gif_n=0; gf_px=gf_cnt=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
+static void slide_gif(const char* tag,int to,int dd){ gif_n=0; gf_px=gf_cnt=refr_n=0; st_ms_sum=st_ms_max=0; st_n=0; flushed=0;
   go(to,dd); double sm=snap_ms; int fr=0; while(gw_slide_active()&&fr<40){ step(30); gif_frame(tag); fr++; } step(30); gif_frame(tag);
   char nm[64]; snprintf(nm,sizeof nm,"slide %s (snapshot both + build %.1f ms host)",tag,sm); perf(nm);
   printf("SLIDE %s frames=%d slide_active_after=%d page_x=%d\n",tag,fr,gw_slide_active(),gw_faces_page_x()); }
@@ -132,7 +133,7 @@ static void after24(void){ char nm[64]; gw_faces_set_slide(false); sim_slide=1;
   night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); gw_grok_set_night(false); sim_slide=0; }
 int main(int argc,char**argv){
   OUT=argv[1]; lv_init(); lv_tick_set_cb(tk);
-  d=lv_display_create(W,W); static uint8_t buf[W*W*2]; lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_DIRECT); lv_display_set_flush_cb(d,flush);
+  d=lv_display_create(W,W); static uint8_t buf[W*W*2]; lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_DIRECT); lv_display_set_flush_cb(d,flush); lv_display_add_event_cb(d,refr_cb,LV_EVENT_REFR_START,NULL);
   lv_indev_t* in=lv_indev_create(); lv_indev_set_type(in,LV_INDEV_TYPE_POINTER); lv_indev_set_read_cb(in,indev_read);
   const char* fp=GW_FONT_BIN; /* absolute path injected by build.sh (-DGW_FONT_BIN=...) */ FILE* ff=fopen(fp,"rb"); if(!ff){ fprintf(stderr,"font not found: %s (run build.sh)\n",fp); return 1; } fseek(ff,0,SEEK_END); long n=ftell(ff); rewind(ff); uint8_t* fbn=malloc(n); fread(fbn,1,n,ff); fclose(ff);
 #ifdef GW_SIM_NO_CBIN   /* 64-bit hosts (arm64 Mac): cbin fonts need 32-bit pointers; use the built-in 20 px CJK font */
