@@ -24,6 +24,7 @@ extern "C" void gw_console_start(void);
 void NavUiGoPage(int p); int NavUiPage(); void NavUiTouchLog(bool on); void NavUiFpsLog(bool on); bool NavUiSlideOn();
 uint32_t NavUiFrameStats(int n,int* mn,int* av,int* mx);
 int GwRotCmd(const char* key,int val,char* out,int n);
+int GwBatCmd(char* out,int n);   // 2.6.37
 static const char* TAG="gwcon";
 static volatile int inj_x=233, inj_y=233; static volatile bool inj_down=false;
 static void inj_read(lv_indev_t*, lv_indev_data_t* d){ d->point.x=inj_x; d->point.y=inj_y; d->state=inj_down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED; }
@@ -90,7 +91,8 @@ static void handle(char* l){
   else if(!strcmp(c,"fps")){ NavUiFpsLog(!strcmp(a,"on")); out("OK\n"); }
   else if(!strcmp(c,"touchlog")){ NavUiTouchLog(!strcmp(a,"on")); out("OK\n"); }
   else if(!strcmp(c,"rot")){ char b[200]; GwRotCmd(a,y,b,sizeof b); out(b); }   // rot | rot <rot|rot_ax|rot_sg|rot_mad|rot_gx|rot_gy> v
-  else out("CMDS: swipe l|r|u|d | tap x y | longpress x y | page n | stat | fps on|off | touchlog on|off | rot [key v]\n"); }
+  else if(!strcmp(c,"bat")){ static char b[4096]; GwBatCmd(b,sizeof b); out(b); }   // 2.6.37 battery log
+  else out("CMDS: swipe l|r|u|d | tap x y | longpress x y | page n | stat | fps on|off | touchlog on|off | rot [key v] | bat\n"); }
 static void task(void*){ char line[96]; int n=0;
   for(;;){ uint8_t ch; if(usb_serial_jtag_read_bytes(&ch,1,portMAX_DELAY)!=1) continue;
     if(ch=='\r'||ch=='\n'){ if(n){ line[n]=0; handle(line); n=0; } } else if(n<(int)sizeof line-1) line[n++]=(char)ch; } }

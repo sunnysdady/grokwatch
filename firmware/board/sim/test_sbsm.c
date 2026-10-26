@@ -41,4 +41,13 @@ int main(void){ int a;
   reset(1); idle_to_standby(); ev(SB_EV_TOUCH); a=ev(SB_EV_TOUCH); CHK("second touch during wake fade: no re-enter",m.st==SB_WAKING&&!(a&SB_A_SHOW));
   reset(1); idle_to_standby(); a=ev(SB_EV_TICK); CHK("standby tick: no action",a==0&&m.st==SB_STANDBY);
   reset(1); idle_to_standby(); ev(SB_EV_TOUCH); for(int i=0;i<5;i++){T+=1000; ev(SB_EV_TICK);} CHK("after wake: idle timer fresh",m.st!=SB_ENTERING);
+  // ---- 2.6.37 deep standby: screen off after 10 min in standby, keys (not touch) wake ----
+  reset(2); idle_to_standby(); for(int i=0;i<594;i++){ T+=1000; a=ev(SB_EV_TICK); } CHK("599.4s since enter: not deep yet",!m.deep&&!(a&SB_A_DEEP));
+  T+=1000; a=ev(SB_EV_TICK); CHK("600.4s since enter -> DEEP once",m.deep&&a==SB_A_DEEP&&m.st==SB_STANDBY);
+  T+=1000; a=ev(SB_EV_TICK); CHK("deep: next tick no action",a==0);
+  advance(300); a=ev(SB_EV_TOUCH); CHK("deep: touch ignored",a==0&&m.st==SB_STANDBY&&m.deep);
+  a=ev(SB_EV_RED_CLICK); CHK("deep: red wakes + UNDEEP",m.st==SB_WAKING&&(a&SB_A_UNDEEP)&&(a&SB_A_HIDE)&&!m.deep);
+  reset(2); idle_to_standby(); for(int i=0;i<600;i++){ T+=1000; ev(SB_EV_TICK); } a=ev(SB_EV_KEY_BLUE); CHK("deep: blue wakes + talk + UNDEEP",(a&SB_A_UNDEEP)&&(a&SB_A_PASS));
+  reset(2); idle_to_standby(); for(int i=0;i<600;i++){ T+=1000; ev(SB_EV_TICK); } a=ev(SB_EV_NAV_TURN); CHK("deep: nav turn wakes + UNDEEP",(a&SB_A_UNDEEP)&&(a&SB_A_GOTO_NAV));
+  reset(2); idle_to_standby(); a=ev(SB_EV_TOUCH); CHK("plain standby wake: no UNDEEP",!(a&SB_A_UNDEEP));
   printf("SBSM %d/%d passed\n",n-fails,n); return fails?1:0; }

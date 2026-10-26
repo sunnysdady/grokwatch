@@ -135,10 +135,12 @@ static void fps_cb(lv_timer_t*){ int64_t t=now_us();
   nfr=0; fr_sum=fr_max=0; fr_t0=t; }
 // ---- 2.6.19 standby: ONE state machine (gw_sbsm.c, spec docs/relay/STANDBY-SPEC.md) owns enter/leave. Everything that
 // used to wake/dim on its own (PowerSaveTimer callbacks, WakeScreen, screen_off_, standby tap hook) now sends an event.
-static void (*backlight_fn)(int pct)=nullptr;   // board: pct 0-100, -1 = restore the user brightness (smooth ramp)
+static void (*backlight_fn)(int pct)=nullptr;
+static void (*deep_fn)(bool on)=nullptr;   // 2.6.37 board: deep standby on = panel sleep, cpu 80 MHz, wifi off   // board: pct 0-100, -1 = restore the user brightness (smooth ramp)
 static gw_sbsm_t sbm; static bool sbm_init=false; static lv_timer_t* sb_anim_t=nullptr;
 static bool standby=false; static uint32_t sb_min=0; static int sb_last=-1;
-static void standby_tick(){ if(!standby) return; time_t now=time(nullptr); struct tm t; localtime_r(&now,&t);
+static void standby_tick(){ if(!standby||sbm.deep) return;   // 2.6.37: no minute redraw while the panel sleeps
+  time_t now=time(nullptr); struct tm t; localtime_r(&now,&t);
   if(t.tm_min!=sb_last){ sb_last=t.tm_min; gw_standby_set(t.tm_hour,t.tm_min,sb_min++); } }
 static int64_t ms_now(){ return now_us()/1000; }
 static sb_ctx_t sb_ctx(){ sb_ctx_t c; c.page=page; c.nav_active=gw_m.nav_active; c.ride_active=gw_m.last_spd!=0;
@@ -156,9 +158,11 @@ static void sb_anim_done(lv_timer_t* t){ lv_timer_delete(t); sb_anim_t=nullptr; 
 static void go(int p,int dd);
 static void sb_exec(int a,const char* why){
   if(!a) return; ESP_LOGW("GW-SB","%s -> act=0x%x state=%s prev=%d",why,a,gw_sbsm_state_str(sbm.st),sbm.prev_page);
+  if(a&SB_A_UNDEEP && deep_fn) deep_fn(false);   // 2.6.37: panel back on before the wake fade
   if(a&SB_A_CLOSE_OVERLAY){ gw_cc_open(nullptr,nullptr); if(power_pending){ power_pending=false; } gw_faces_sheet(nullptr,nullptr); }
   if(a&SB_A_SHOW){ sb_pages_hidden(false); standby=true; sb_last=-1; standby_tick(); gw_standby_show(true); }
   if(a&SB_A_DIM && backlight_fn) backlight_fn(10);
+  if(a&SB_A_DEEP){ if(backlight_fn) backlight_fn(0); if(deep_fn) deep_fn(true); }   // 2.6.37
   if(a&SB_A_HIDE){ standby=false; wake_us=now_us(); sb_pages_hidden(false); gw_standby_show(false);
     int to=(a&SB_A_GOTO_NAV)?GW_PAGE_NAV:(a&SB_A_GOTO_CHAT)?GW_PAGE_CHAT:(a&SB_A_GOTO_PREV)?sbm.prev_page:page;
     if(to!=page) go(to,to>page?1:-1); else render(); }
@@ -339,7 +343,9 @@ void NavUiHome(){ sched([](){ gw_cc_open(nullptr,nullptr); gw_faces_sheet(nullpt
 void NavUiShowChat(){ if(page!=0) sched([](){ go(0,-1); }); }
 void NavUiSetHaptic(void (*f)(int)){ haptic=f; }
 void NavUiSetBacklight(void (*f)(int)){ backlight_fn=f; }
+void NavUiSetDeep(void (*f)(bool)){ deep_fn=f; }
 bool NavUiIsStandby(){ return standby; }
+int NavUiPowerLevel(){ return !standby?0:(sbm.deep?2:1); }   // 2.6.37: 0 awake, 1 standby clock, 2 deep (screen off)
 // Keys: the board passes the key event and its normal action; the SM decides (in the UI context) whether the key only
 // wakes the watch or also does its job. ev: SB_EV_RED_CLICK / KEY_YELLOW / KEY_BLUE / RED_DOUBLE / VOICE.
 void NavUiKey(int ev,std::function<void()> normal){ sched([ev,normal](){ if(!built) return;

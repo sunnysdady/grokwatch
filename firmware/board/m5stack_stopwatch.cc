@@ -21,12 +21,16 @@
 #include <cmath>
 #include "bmi270_api.h"
 #include "gw_orient.h"
+#include <esp_pm.h>
+#include <nvs.h>
+#include <ctime>
 
 extern "C" void gw_ble_start(void);
 extern "C" void gw_bg_load(void);
 void NavUiToggle(); void NavUiNext(); void NavUiHome(); void NavUiShowChat(); void NavUiInit();
 void NavUiSetHaptic(void (*f)(int)); void NavUiSetBacklight(void (*f)(int)); void NavUiKey(int ev, std::function<void()> normal); bool NavUiIsStandby(); void NavUiSetChatTap(void (*f)()); bool NavUiPowerPending(); void NavUiStandby(bool on); void NavUiPowerMenu(bool show);
 void NavUiSetTouchIndev(lv_indev_t* i); extern "C" void gw_console_start(void); bool NavUiBusy();
+void NavUiSetDeep(void (*f)(bool)); int NavUiPowerLevel();   // 2.6.37 deep standby
 #include <esp_timer.h>
 #include "gw_health.h"
 #include <ssid_manager.h>
@@ -331,11 +335,28 @@ private:
     // 2.6.19: no WakeScreen / screen_off_ / PowerSaveTimer standby any more. Every key goes through NavUiKey(): the
     // standby state machine (gw_sbsm.c, docs/relay/STANDBY-SPEC.md) decides "wake only" vs "wake + normal action".
     static void SetBacklightPct(int pct) { if (!self_ || !self_->backlight_) return; if (pct < 0) self_->backlight_->RestoreBrightness(); else self_->backlight_->SetBrightness(pct); }
+    // 2.6.37: deep standby (10 min into the standby clock, gw_sbsm SB_A_DEEP). LVGL context, display lock held.
+    // Raw SLPIN/SLPOUT keeps MADCTL/TE/gap; esp_lcd_panel_disp_sleep's deep-standby path resets and re-inits the panel.
+    bool wifi_was_on_ = false;
+    static void PanelCmd(uint8_t c) { esp_lcd_panel_io_tx_param(self_->panel_io_, (LCD_OPCODE_WRITE_CMD << 24) | (c << 8), nullptr, 0); }
+    static void SetDeep(bool on) {
+        auto* b = self_; if (!b || !b->panel_io_) return;
+        if (on) { PanelCmd(0x28); PanelCmd(0x10); } else { PanelCmd(0x11); vTaskDelay(pdMS_TO_TICKS(120)); PanelCmd(0x29); }
+#if CONFIG_PM_ENABLE
+        esp_pm_config_t c = {}; c.max_freq_mhz = c.min_freq_mhz = on ? 80 : 240; c.light_sleep_enable = false; esp_pm_configure(&c);
+#endif
+        Application::GetInstance().Schedule([b, on]() {   // Wi-Fi off/on outside the UI thread; BLE stays up for nav
+            auto& w = WifiManager::GetInstance();
+            if (on) { if (w.IsInitialized() && !w.IsConfigMode()) { b->wifi_was_on_ = true; w.StopStation(); } }
+            else if (b->wifi_was_on_) { b->wifi_was_on_ = false; w.StartStation(); } });
+        ESP_LOGW("GW-PWR", "deep %s", on ? "on: panel sleep, cpu 80, wifi off" : "off: panel on, cpu 240, wifi on");
+    }
     void InitializeButtons() {
         self_ = this;
         NavUiSetHaptic(&M5StackStopwatchBoard::Haptic);
         NavUiSetChatTap([]() { Application::GetInstance().ToggleChatState(); });
         NavUiSetBacklight(&M5StackStopwatchBoard::SetBacklightPct);
+        NavUiSetDeep(&M5StackStopwatchBoard::SetDeep);
         // Yellow key (G2) = navigation key: click = next page, double = home (watch face), long = volume
         button1_.OnClick([this]() { NavUiKey(SB_EV_KEY_YELLOW, [this]() {
             if (NavUiPowerPending()) { NavUiPowerMenu(false); return; }   // cancel power-off
@@ -464,13 +485,16 @@ private:
         i2c_bus_handle_t bus = i2c_bus_create(I2C_NUM_0, &c);   // wraps the board's existing I2C_NUM_0 master bus
         bmi270_handle_t h = nullptr;
         if (!bus || bmi270_sensor_create(bus, &h, bmi270_config_file, BMI2_GYRO_CROSS_SENS_ENABLE | BMI2_CRT_RTOSK_ENABLE) != ESP_OK || !h) {
-            ESP_LOGE("GW-ROT", "BMI270 init failed, auto-rotate off"); vTaskDelete(nullptr); return; }
-        uint8_t acc = BMI2_ACCEL; bmi270_sensor_enable(&acc, 1, h);
+            ESP_LOGE("GW-ROT", "BMI270 init failed, auto-rotate off"); h = nullptr; }   // 2.6.37: task stays for the battery log
+        if (h) { uint8_t acc = BMI2_ACCEL; bmi270_sensor_enable(&acc, 1, h);
         bmi2_sens_config cfg = {}; cfg.type = BMI2_ACCEL; bmi270_get_sensor_config(&cfg, 1, h);
-        cfg.cfg.acc.odr = BMI2_ACC_ODR_25HZ; cfg.cfg.acc.range = BMI2_ACC_RANGE_2G; bmi270_set_sensor_config(&cfg, 1, h);
+        cfg.cfg.acc.odr = BMI2_ACC_ODR_25HZ; cfg.cfg.acc.range = BMI2_ACC_RANGE_2G; bmi270_set_sensor_config(&cfg, 1, h); }
         gw_orient_t o = {}; int n = 0;
+        b->BatLoad(); b->BatTick(true);
         for (;;) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            int pl = NavUiPowerLevel(); int ms = pl ? 1000 : 100;   // 2.6.37: 100 ms awake, 1 s on the standby clock
+            vTaskDelay(pdMS_TO_TICKS(ms)); b->bat_ms_ += ms; b->BatTick(false);
+            if (!h || NavUiPowerLevel() == 2) continue;              // deep standby: screen off, no auto-rotate
             bmi2_sens_data d = {};
             if (bmi2_get_sensor_data(&d, h) != BMI2_OK) continue;
             float* a = b->acc_; a[0] = d.acc.x / 16384.f; a[1] = d.acc.y / 16384.f; a[2] = d.acc.z / 16384.f;
@@ -484,7 +508,42 @@ private:
     // 2.6.19: PowerSaveTimer removed (it entered standby on its own after 60 s on battery and light-slept the CPU,
     // which also muted the wake word). Standby is owned by the nav_ui state machine; Wi-Fi/BLE stay up in standby.
 
+    // 2.6.37 battery log: GW-BAT every 5 min; every 15 min one entry into a 96-slot NVS ring (gw/batlog, ~24 h).
+    struct BatEnt { uint32_t t; uint16_t mv; uint8_t pwr, chg; };
+    struct BatRing { uint16_t head, n; BatEnt e[96]; };
+    BatRing bat_ = {}; int64_t bat_ms_ = 0, bat_log_ms_ = 0, bat_nvs_ms_ = 0;
+    void BatLoad() {
+        nvs_handle_t h; size_t l = sizeof bat_;
+        if (nvs_open("gw", NVS_READONLY, &h) != ESP_OK) return;
+        if (nvs_get_blob(h, "batlog", &bat_, &l) != ESP_OK || l != sizeof bat_ || bat_.head >= 96 || bat_.n > 96) bat_ = {};
+        nvs_close(h);
+    }
+    void BatTick(bool now) {
+        if (!now && bat_ms_ - bat_log_ms_ < 5 * 60000) return;
+        bat_log_ms_ = bat_ms_;
+        uint16_t mv = 0; int lvl = 0; bool chg = false, dis = false;
+        if (pmic_.readVbat(&mv) != M5PM1_OK || !GetBatteryLevel(lvl, chg, dis)) return;
+        int pl = NavUiPowerLevel();
+        ESP_LOGW("GW-BAT", "mv=%u lvl=%d chg=%d pwr=%d up=%llds", mv, lvl, (int)chg, pl, (long long)(esp_timer_get_time() / 1000000));
+        if (!now && bat_ms_ - bat_nvs_ms_ < 15 * 60000) return;
+        bat_nvs_ms_ = bat_ms_;
+        bat_.e[bat_.head] = { (uint32_t)time(nullptr), mv, (uint8_t)pl, (uint8_t)chg }; bat_.head = (bat_.head + 1) % 96;
+        if (bat_.n < 96) bat_.n++;
+        nvs_handle_t h; if (nvs_open("gw", NVS_READWRITE, &h) != ESP_OK) return;
+        nvs_set_blob(h, "batlog", &bat_, sizeof bat_); nvs_commit(h); nvs_close(h);
+    }
 public:
+    // Console "bat": current reading + the ring oldest -> newest ("MM-DD HH:MM mv pwr chg"; pwr 0 awake, 1 standby, 2 deep).
+    static int BatCmd(char* out, int n) {
+        auto* b = self_; if (!b) return snprintf(out, n, "ERR no board\n");
+        uint16_t mv = 0; int lvl = 0; bool chg = false, dis = false; b->pmic_.readVbat(&mv); b->GetBatteryLevel(lvl, chg, dis);
+        int k = snprintf(out, n, "now mv=%u lvl=%d chg=%d pwr=%d, %d log entries (15 min)\n", mv, lvl, (int)chg, NavUiPowerLevel(), b->bat_.n);
+        const BatRing& r = b->bat_;
+        for (int i = 0; i < r.n && k < n - 40; i++) { const BatEnt& e = r.e[(r.head + 96 - r.n + i) % 96];
+            time_t t = e.t; struct tm tm; localtime_r(&t, &tm);
+            k += snprintf(out + k, n - k, "%02d-%02d %02d:%02d %u %d %d\n", tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, e.mv, e.pwr, e.chg); }
+        return k;
+    }
     // Console "rot": no key = status; else set NVS gw/<key> and apply (re-flips on the next IMU sample).
     static int RotCmd(const char* key, int val, char* out, int n) {
         auto* b = self_; if (!b) return snprintf(out, n, "ERR no board\n");
@@ -589,4 +648,5 @@ public:
 
 M5StackStopwatchBoard* M5StackStopwatchBoard::self_ = nullptr;
 int GwRotCmd(const char* key, int val, char* out, int n) { return M5StackStopwatchBoard::RotCmd(key, val, out, n); }
+int GwBatCmd(char* out, int n) { return M5StackStopwatchBoard::BatCmd(out, n); }
 DECLARE_BOARD(M5StackStopwatchBoard);
