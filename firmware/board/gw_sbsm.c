@@ -4,7 +4,12 @@ void gw_sbsm_init(gw_sbsm_t* m,int64_t now){ m->st=SB_ACTIVE; m->last_input_ms=n
 static bool awake(const gw_sbsm_t* m){ return m->st==SB_ACTIVE||m->st==SB_WAKING; }
 static int enter(gw_sbsm_t* m,const sb_ctx_t* c,int64_t now){ m->prev_page=c->page; m->st=SB_ENTERING; m->last_change_ms=now;
   return SB_A_SHOW|SB_A_DIM|(c->overlay_open?SB_A_CLOSE_OVERLAY:0); }
-static int wake(gw_sbsm_t* m,int64_t now,int extra){ if(m->deep){ m->deep=false; extra|=SB_A_UNDEEP; } m->st=SB_WAKING;   // 2.6.37 m->last_change_ms=now; m->last_input_ms=now;
+static int wake(gw_sbsm_t* m,int64_t now,int extra){
+  if(m->deep){ m->deep=false; extra|=SB_A_UNDEEP; }
+  m->st=SB_WAKING;
+  // Every wake starts a fresh idle interval and transition debounce window.
+  m->last_change_ms=now;
+  m->last_input_ms=now;
   return SB_A_HIDE|SB_A_RESTORE|extra; }
 // idle timeout for the current context; 0 = never auto-enter
 static int64_t idle_ms(const sb_ctx_t* c){ if(c->nav_active||c->ride_active||c->voice_busy||c->overlay_open) return 0; return SB_IDLE_MS; }
@@ -29,5 +34,5 @@ int gw_sbsm_event(gw_sbsm_t* m,sb_event_t ev,const sb_ctx_t* c,int64_t now){
   case SB_EV_RED_DOUBLE: if(awake(m)){ m->last_input_ms=now; return SB_A_PASS; } return wake(m,now,SB_A_PASS);        // power menu on top
   case SB_EV_NAV_START: case SB_EV_NAV_TURN: if(awake(m)){ m->last_input_ms=now; return 0; } return wake(m,now,SB_A_GOTO_NAV);
   case SB_EV_VOICE:   if(awake(m)){ m->last_input_ms=now; return 0; } return wake(m,now,SB_A_GOTO_CHAT);
-  case SB_EV_SUMMARY: if(awake(m)){ m->last_input_ms=now; return 0; } return wake(m,now,0);
+  case SB_EV_CHARGE: case SB_EV_SUMMARY: if(awake(m)){ m->last_input_ms=now; return 0; } return wake(m,now,0);
   } return 0; }

@@ -8,7 +8,7 @@ extern "C" {
 #endif
 typedef enum { SB_ACTIVE=0, SB_ENTERING, SB_STANDBY, SB_WAKING } sb_state_t;
 typedef enum { SB_EV_TICK=0, SB_EV_ACTIVITY, SB_EV_RED_CLICK, SB_EV_TOUCH, SB_EV_KEY_YELLOW, SB_EV_KEY_BLUE, SB_EV_RED_DOUBLE,
-               SB_EV_NAV_START, SB_EV_NAV_TURN, SB_EV_VOICE, SB_EV_SUMMARY, SB_EV_ANIM_DONE } sb_event_t;
+               SB_EV_NAV_START, SB_EV_NAV_TURN, SB_EV_VOICE, SB_EV_SUMMARY, SB_EV_ANIM_DONE, SB_EV_CHARGE } sb_event_t;
 enum { SB_A_SHOW=1, SB_A_HIDE=2, SB_A_DIM=4, SB_A_RESTORE=8, SB_A_SWALLOW=16, SB_A_GOTO_NAV=32, SB_A_GOTO_PREV=64,
        SB_A_CLOSE_OVERLAY=128, SB_A_HAPTIC=256, SB_A_PASS=512 /* event also does its normal job (blue = talk, red double = power menu) */, SB_A_GOTO_CHAT=1024,
        SB_A_DEEP=2048 /* 2.6.37: 10 min in standby -> panel sleep, cpu 80, wifi off */, SB_A_UNDEEP=4096 };

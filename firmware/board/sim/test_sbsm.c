@@ -7,6 +7,32 @@ static int ev(sb_event_t e){ return gw_sbsm_event(&m,e,&c,T); }
 static void reset(int page){ T=100000; gw_sbsm_init(&m,T); sb_ctx_t z={0}; c=z; c.page=page; }
 static void idle_to_standby(void){ for(int i=0;i<25;i++){ T+=1000; ev(SB_EV_TICK);} T+=400; ev(SB_EV_ANIM_DONE); }
 static void advance(int ms){ T+=ms; }
+// Complete the UI lifecycle: without ANIM_DONE, WAKING never runs the idle timeout.
+static void check_wake_cycle(sb_event_t event, const char* name, bool deep){
+  char label[120];
+#define WAKE_CHK(step,cond) do { snprintf(label,sizeof label,"%s %s: %s",deep?"deep":"plain",name,step); CHK(label,cond); } while(0)
+  reset(2); idle_to_standby();
+  if(deep){ T=m.last_change_ms+SB_DEEP_MS; ev(SB_EV_TICK); }
+  WAKE_CHK("standby reached",m.st==SB_STANDBY&&m.deep==deep);
+  int64_t wake_at=T;
+  int a=ev(event);
+  WAKE_CHK("wake actions",m.st==SB_WAKING&&!m.deep&&(a&SB_A_HIDE)&&(a&SB_A_RESTORE)&&!!(a&SB_A_UNDEEP)==deep);
+  advance(SB_EXIT_MS); ev(SB_EV_ANIM_DONE);
+  WAKE_CHK("animation completes",m.st==SB_ACTIVE);
+  T=wake_at+1000; a=ev(SB_EV_TICK);
+  WAKE_CHK("next tick stays awake",m.st==SB_ACTIVE&&a==0);
+  T=wake_at+SB_IDLE_MS-1; a=ev(SB_EV_TICK);
+  WAKE_CHK("full idle interval",m.st==SB_ACTIVE&&a==0);
+  T=wake_at+SB_IDLE_MS; a=ev(SB_EV_TICK);
+  WAKE_CHK("idle expires",m.st==SB_ENTERING&&(a&SB_A_SHOW)&&(a&SB_A_DIM));
+  advance(SB_ENTER_MS); ev(SB_EV_ANIM_DONE);
+  WAKE_CHK("returns to ordinary standby",m.st==SB_STANDBY&&!m.deep);
+  // A second wake must reset the timer again, not merely work once after boot.
+  advance(1000); ev(SB_EV_TOUCH); advance(SB_EXIT_MS); ev(SB_EV_ANIM_DONE);
+  advance(1000); a=ev(SB_EV_TICK);
+  WAKE_CHK("second wake stays awake",m.st==SB_ACTIVE&&a==0);
+#undef WAKE_CHK
+}
 int main(void){ int a;
   // ---- entry ----
   reset(2); for(int i=0;i<19;i++){ T+=1000; ev(SB_EV_TICK);} CHK("idle 19s: still active",m.st==SB_ACTIVE);
@@ -40,7 +66,24 @@ int main(void){ int a;
   reset(1); for(int i=0;i<20;i++){T+=1000; ev(SB_EV_TICK);} advance(270); a=ev(SB_EV_RED_CLICK); CHK("red 270ms after idle-enter starts: stays going to standby",m.st==SB_ENTERING&&a==0);
   reset(1); idle_to_standby(); ev(SB_EV_TOUCH); a=ev(SB_EV_TOUCH); CHK("second touch during wake fade: no re-enter",m.st==SB_WAKING&&!(a&SB_A_SHOW));
   reset(1); idle_to_standby(); a=ev(SB_EV_TICK); CHK("standby tick: no action",a==0&&m.st==SB_STANDBY);
-  reset(1); idle_to_standby(); ev(SB_EV_TOUCH); for(int i=0;i<5;i++){T+=1000; ev(SB_EV_TICK);} CHK("after wake: idle timer fresh",m.st!=SB_ENTERING);
+  reset(1); idle_to_standby(); ev(SB_EV_TOUCH); advance(SB_EXIT_MS); ev(SB_EV_ANIM_DONE);
+  for(int i=0;i<5;i++){T+=1000; ev(SB_EV_TICK);} CHK("after wake: idle timer fresh",m.st==SB_ACTIVE);
+  const sb_event_t wakes[]={SB_EV_TOUCH,SB_EV_RED_CLICK,SB_EV_KEY_YELLOW,SB_EV_KEY_BLUE,SB_EV_RED_DOUBLE,SB_EV_NAV_START,SB_EV_NAV_TURN,SB_EV_VOICE,SB_EV_SUMMARY,SB_EV_CHARGE};
+  const char* names[]={"touch","red","yellow","blue","red double","nav start","nav turn","voice","summary","charging"};
+  for(int deep=0;deep<2;deep++){
+    for(unsigned i=0;i<sizeof wakes/sizeof wakes[0];i++){
+      if(deep&&wakes[i]==SB_EV_TOUCH) continue; // deep standby intentionally ignores touch
+      check_wake_cycle(wakes[i],names[i],deep);
+    }
+    reset(2); idle_to_standby();
+    if(deep){ T=m.last_change_ms+SB_DEEP_MS; ev(SB_EV_TICK); }
+    ev(SB_EV_KEY_YELLOW); int64_t wake_at=T;
+    advance(SB_EXIT_MS); ev(SB_EV_ANIM_DONE);
+    T=wake_at+SB_DEBOUNCE_MS-1; a=ev(SB_EV_RED_CLICK);
+    CHK(deep?"deep wake: red ignored before debounce boundary":"plain wake: red ignored before debounce boundary",a==0&&m.st==SB_ACTIVE);
+    T=wake_at+SB_DEBOUNCE_MS; a=ev(SB_EV_RED_CLICK);
+    CHK(deep?"deep wake: red accepted at debounce boundary":"plain wake: red accepted at debounce boundary",m.st==SB_ENTERING&&(a&SB_A_SHOW));
+  }
   // ---- 2.6.37 deep standby: screen off after 10 min in standby, keys (not touch) wake ----
   reset(2); idle_to_standby(); for(int i=0;i<594;i++){ T+=1000; a=ev(SB_EV_TICK); } CHK("599.4s since enter: not deep yet",!m.deep&&!(a&SB_A_DEEP));
   T+=1000; a=ev(SB_EV_TICK); CHK("600.4s since enter -> DEEP once",m.deep&&a==SB_A_DEEP&&m.st==SB_STANDBY);

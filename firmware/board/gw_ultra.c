@@ -583,7 +583,7 @@ static void sb_draw(lv_event_t* e){ lv_layer_t* L=lv_event_get_layer(e); lv_area
     else { sb_card(L,dn,x,y,top,hy,opa,0); sb_card(L,dold,x,y,hy,bot,opa,0);
       if(sb_fp<500) sb_card(L,dold,x,y,hy-h*(500-sb_fp)/500,hy,opa,(lv_opa_t)(sb_fp*140/500));      // old top folding down, darkening
       else          sb_card(L,dn,x,y,hy,hy+h*(sb_fp-500)/500,opa,(lv_opa_t)((1000-sb_fp)*140/500)); }  // new bottom unfolding, lightening
-    lv_draw_rect_dsc_t g; lv_draw_rect_dsc_init(&g); g.bg_color=lv_color_black(); g.bg_opa=LV_OPA_COVER;   // hinge gap
+    lv_draw_rect_dsc_t g; lv_draw_rect_dsc_init(&g); g.bg_color=lv_color_black(); g.bg_opa=opa;   // hinge gap follows standby fade, just like the cards
     lv_area_t ga={(int)x,hy-2,(int)x+SB_CW-1,hy+1}; lv_draw_rect(L,&g,&ga); } }
 static void sb_flip_cb(void* o,int32_t v){ (void)o; sb_fp=v; if(sb) lv_obj_invalidate(sb); }
 static const signed char sb_orbit[8][2]={{0,0},{5,-3},{6,3},{2,6},{-3,5},{-6,1},{-5,-4},{-1,-6}};
@@ -603,9 +603,10 @@ static void sb_press(lv_event_t* e){ (void)e; if(sb_tap) sb_tap(); }
 void gw_standby_set_tap(void (*cb)(void)){ sb_tap=cb; if(sb) lv_obj_add_event_cb(sb,sb_press,LV_EVENT_PRESSED,NULL); }
 // 2.6.19: enter = 360 ms ease-out fade in; leave = 220 ms ease-in fade out (exit faster than enter). The layer stays
 // clickable during the fade-out so the waking touch can never land on the page underneath.
-static void sb_out_done(lv_anim_t* a){ (void)a; if(sb){ lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE); } }
+static void sb_out_done(lv_anim_t* a){ (void)a; if(sb){ lv_obj_add_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(sb,LV_OBJ_FLAG_CLICKABLE); lv_obj_invalidate(lv_screen_active()); } }
 void gw_standby_show(bool on){ if(!sb) return; lv_anim_delete(sb,sb_opa);
   if(on){ if(lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN)) sb_a=0; lv_obj_add_flag(sb,LV_OBJ_FLAG_CLICKABLE); lv_obj_remove_flag(sb,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(sb); sb_fade(sb_a<LV_OPA_COVER?sb_a:0,360); return; }
+  lv_anim_delete(&sb_fp,sb_flip_cb); sb_fp=1000; memcpy(sb_old,sb_txt,sizeof sb_old);
   if(lv_obj_has_flag(sb,LV_OBJ_FLAG_HIDDEN)) return;
   lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,sb); lv_anim_set_exec_cb(&a,sb_opa); lv_anim_set_values(&a,sb_a,0);
   lv_anim_set_duration(&a,220); lv_anim_set_path_cb(&a,lv_anim_path_ease_in); lv_anim_set_completed_cb(&a,sb_out_done); lv_anim_start(&a); }
@@ -616,3 +617,48 @@ void gw_standby_set(int hh,int mm,uint32_t minute_count){
   if(changed&&gw_standby_is_on()){ lv_anim_t f; lv_anim_init(&f); lv_anim_set_var(&f,&sb_fp); lv_anim_set_exec_cb(&f,sb_flip_cb);
     lv_anim_set_values(&f,0,1000); lv_anim_set_duration(&f,520); lv_anim_set_path_cb(&f,lv_anim_path_ease_in_out); sb_fp=0; lv_anim_start(&f); }
   else { memcpy(sb_old,b,5); sb_fp=1000; } lv_obj_invalidate(sb); }
+
+// Power status stays readable over imported photos; the charge screen is transient.
+static lv_obj_t *power_badge, *power_screen, *power_value, *power_ring, *power_bolt, *power_title;
+static void (*power_dismiss)(void);
+static void power_pressed(lv_event_t* e){ (void)e; if(power_dismiss) power_dismiss(); lv_obj_add_flag(power_screen,LV_OBJ_FLAG_HIDDEN); }
+void gw_power_create(lv_obj_t* parent, void (*dismiss)(void)){
+  power_dismiss=dismiss;
+  power_badge=label(parent,F20,K_TXT,0,0);
+  lv_obj_set_style_bg_color(power_badge,lv_color_black(),0);
+  lv_obj_set_style_bg_opa(power_badge,LV_OPA_COVER,0);
+  lv_obj_set_style_pad_hor(power_badge,8,0); lv_obj_set_style_radius(power_badge,8,0);
+  lv_obj_align(power_badge,LV_ALIGN_BOTTOM_MID,0,-20);
+  power_screen=lv_obj_create(parent); lv_obj_remove_style_all(power_screen);
+  lv_obj_set_size(power_screen,466,466); lv_obj_center(power_screen);
+  lv_obj_set_style_bg_color(power_screen,lv_color_black(),0); lv_obj_set_style_bg_opa(power_screen,LV_OPA_COVER,0);
+  lv_obj_remove_flag(power_screen,LV_OBJ_FLAG_SCROLLABLE); lv_obj_add_flag(power_screen,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_event_cb(power_screen,power_pressed,LV_EVENT_PRESSED,NULL);
+  power_title=label(power_screen,F21,K_GRN,0,-175);
+  power_ring=arc(power_screen,300,12,K_CARD,K_GRN); lv_obj_center(power_ring);
+  // Vector bolt avoids depending on a private-use glyph missing from gu_icon.
+  static const lv_point_precise_t bolt_points[]={{28,0},{4,26},{20,26},{0,52}};
+  power_bolt=lv_line_create(power_screen); lv_line_set_points(power_bolt,bolt_points,4);
+  lv_obj_set_style_line_color(power_bolt,col(K_GRN),0); lv_obj_set_style_line_width(power_bolt,5,0);
+  lv_obj_set_style_line_rounded(power_bolt,true,0); lv_obj_align(power_bolt,LV_ALIGN_CENTER,0,-60);
+  power_value=label(power_screen,&gu_hero,K_TXT,0,20);
+  lv_obj_t* pct=label(power_screen,F21,K_TXT,0,105); lv_label_set_text(pct,"%");
+  lv_obj_t* hint=label(power_screen,F20,K_SEC,0,175); lv_label_set_text(hint,"估算电量 · 轻触返回");
+}
+void gw_power_show(int level, int charge_state, bool show, bool asleep, unsigned phase){
+  bool charging=charge_state==1;
+  if(!power_badge) return;
+  if(asleep){ lv_obj_add_flag(power_badge,LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(power_screen,LV_OBJ_FLAG_HIDDEN); return; }
+  char b[48];
+  if(level<0) snprintf(b,sizeof b,"电量 --");
+  else snprintf(b,sizeof b,"%s~%d%%",charging?"充电 ":charge_state==2?"接电 ":"电量 ",level);
+  lv_label_set_text(power_badge,b); lv_obj_set_style_text_color(power_badge,col(charging?K_GRN:(level>=0&&level<=20?K_RED:K_TXT)),0);
+  lv_obj_remove_flag(power_badge,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(power_badge);
+  if(!show){ lv_obj_add_flag(power_screen,LV_OBJ_FLAG_HIDDEN); return; }
+  lv_obj_remove_flag(power_screen,LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(power_screen);
+  lv_label_set_text(power_title,charging?"正在充电":charge_state==2?"已接电，未充电":"电源状态未知");
+  if(level<0) snprintf(b,sizeof b,"--"); else snprintf(b,sizeof b,"%d",level); lv_label_set_text(power_value,b);
+  arc_set(power_ring,270,359,level/100.f);
+  // One visual step per existing 1 s UI tick; no extra wake timer or perpetual animation.
+  lv_obj_set_style_opa(power_bolt,(phase&1)?LV_OPA_COVER:LV_OPA_50,0);
+}

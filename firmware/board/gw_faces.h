@@ -62,3 +62,12 @@ void gw_grok_variant(int v);      // face variant (review only; default 2)    //
 #ifdef __cplusplus
 }
 #endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void gw_power_create(lv_obj_t* parent, void (*dismiss)(void));
+void gw_power_show(int level, int charge_state, bool show, bool asleep, unsigned phase);
+#ifdef __cplusplus
+}
+#endif

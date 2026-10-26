@@ -15,6 +15,8 @@
 #include <wifi_manager.h>
 #include "gw_sbsm.h"
 #include "gw_redkey.h"
+#include "gw_power.h"
+#include "gw_battery.h"
 #include <functional>
 #include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
@@ -235,11 +237,16 @@ private:
             return;
         }
 
-        pmic_.setChargeEnable(true);
+        // Match vendor PMIC setup: keep register transactions awake and check writes.
+        int sleep_err=pmic_.setI2cSleepTime(0);
+        int charge_err=pmic_.setChargeEnable(true);
+        if (sleep_err != M5PM1_OK || charge_err != M5PM1_OK)
+            ESP_LOGE(TAG, "PMIC charging configuration failed");
         pmic_.setBoostEnable(true);
         pmic_.pinMode(PMIC_PIN_CHARGE_STATE, INPUT);
-        pmic_.pinMode(PMIC_PIN_CHARGE_PROG, OUTPUT);
-        pmic_.digitalWrite(PMIC_PIN_CHARGE_PROG, LOW); // Set charge current to 425mA
+        if (pmic_.gpioSet(PMIC_PIN_CHARGE_PROG, M5PM1_GPIO_MODE_OUTPUT, 0,
+                         M5PM1_GPIO_PULL_NONE, M5PM1_GPIO_DRIVE_PUSHPULL) != M5PM1_OK)
+            ESP_LOGE(TAG, "PMIC charge-current pin configuration failed");
 
         ioe_.pinMode(IOE_PIN_LCD_POWER, OUTPUT);
         ioe_.setDriveMode(IOE_PIN_LCD_POWER, M5IOE1_DRIVE_PUSHPULL);
@@ -533,6 +540,28 @@ private:
         nvs_set_blob(h, "batlog", &bat_, sizeof bat_); nvs_commit(h); nvs_close(h);
     }
 public:
+    static int PowerSample(int* level, int* vin, int* pin) {
+        *level=-1; *vin=-1; *pin=-1;
+        auto* b=self_; if (!b) return 0;
+        uint16_t mv=0, input=0;
+        if (b->pmic_.readVin(&input)==M5PM1_OK) *vin=input;
+        *pin=b->pmic_.digitalRead(PMIC_PIN_CHARGE_STATE);
+        if (b->pmic_.readVbat(&mv)!=M5PM1_OK) return 0;
+        static gw_battery_t estimate={};
+        static portMUX_TYPE lock=portMUX_INITIALIZER_UNLOCKED;
+        taskENTER_CRITICAL(&lock);
+        *level=gw_battery_update(&estimate,mv,*vin>4000,esp_timer_get_time()/1000);
+        taskEXIT_CRITICAL(&lock);
+        return 1;
+    }
+    static int PowerDiag(char* out,int n){
+        int level,vin,pin;
+        int valid=PowerSample(&level,&vin,&pin);
+        uint8_t cfg=0; int cfg_ok=self_?self_->pmic_.getPowerConfig(&cfg):-1;
+        int prog=self_?self_->pmic_.digitalRead(PMIC_PIN_CHARGE_PROG):-1;
+        return snprintf(out,n,"POWER valid=%d level=%d vin_mv=%d charge_pin=%d state=%d cfg_ok=%d cfg=%u prog=%d pwr=%d\n",
+                        valid,level,vin,pin,valid?gw_charge_status(vin,pin):-1,cfg_ok,cfg,prog,NavUiPowerLevel());
+    }
     // Console "bat": current reading + the ring oldest -> newest ("MM-DD HH:MM mv pwr chg"; pwr 0 awake, 1 standby, 2 deep).
     static int BatCmd(char* out, int n) {
         auto* b = self_; if (!b) return snprintf(out, n, "ERR no board\n");
@@ -611,34 +640,11 @@ public:
     }
 
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
-        uint16_t voltage_mv = 0;
-        static bool last_discharging = true;
-        if (pmic_.readVbat(&voltage_mv) != M5PM1_OK) {
-            return false;
-        }
-
-        int charge_state_level = pmic_.digitalRead(PMIC_PIN_CHARGE_STATE);
-        if (charge_state_level < 0) {
-            // Charge status read failed; leave charging/discharging unknown
-            charging = false;
-            discharging = false;
-        } else {
-            // M5PM1 charge status is active low: 0 means charging, 1 means not charging
-            charging = (charge_state_level == 0);
-            discharging = !charging;
-        }
-        last_discharging = discharging; (void)last_discharging;
-
-        const int BATTERY_MIN_VOLTAGE = 3400;
-        const int BATTERY_MAX_VOLTAGE = 4200;
-        if (voltage_mv < BATTERY_MIN_VOLTAGE) {
-            level = 0;
-        } else if (voltage_mv > BATTERY_MAX_VOLTAGE) {
-            level = 100;
-        } else {
-            level = ((voltage_mv - BATTERY_MIN_VOLTAGE) * 100) / (BATTERY_MAX_VOLTAGE - BATTERY_MIN_VOLTAGE);
-        }
-        return true;
+        int vin=-1,pin=-1;
+        bool valid=PowerSample(&level,&vin,&pin);
+        int state=gw_charge_status(vin,pin);
+        charging=state==1; discharging=state==0||state==2;
+        return valid;
     }
 
     void SetPowerSaveLevel(PowerSaveLevel level) override {
@@ -648,5 +654,7 @@ public:
 
 M5StackStopwatchBoard* M5StackStopwatchBoard::self_ = nullptr;
 int GwRotCmd(const char* key, int val, char* out, int n) { return M5StackStopwatchBoard::RotCmd(key, val, out, n); }
+int GwPowerDiag(char* out,int n) { return M5StackStopwatchBoard::PowerDiag(out,n); }
+int GwPowerSample(int* level, int* vin, int* pin) { return M5StackStopwatchBoard::PowerSample(level,vin,pin); }
 int GwBatCmd(char* out, int n) { return M5StackStopwatchBoard::BatCmd(out, n); }
 DECLARE_BOARD(M5StackStopwatchBoard);

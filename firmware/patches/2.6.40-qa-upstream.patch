@@ -1,0 +1,245 @@
+diff --git a/.gitignore b/.gitignore
+index 5326d47..a127c0a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -18,3 +18,4 @@ main/mmap_generate_emoji.h
+ *.bin
+ mmap_generate_*.h
+ .clangd
++sdkconfig.private
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3b9df7e..3c34734 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,8 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+-set(PROJECT_VER "2.5.3")
++set(PROJECT_VER "2.6.40-qa")
+ project(xiaozhi)
++
++idf_component_get_property(gw_lvgl_lib lvgl__lvgl COMPONENT_LIB)
++target_compile_options(${gw_lvgl_lib} PRIVATE -O2)
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index be3f5cb..dd49af8 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -241,7 +241,7 @@ elseif(CONFIG_BOARD_TYPE_MAZA_AI_ESP32_S31)
+     set(BUILTIN_ICON_FONT font_material_symbols_14_1)
+ elseif(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
+     set(BOARD_DIR "m5stack/stopwatch")
+-    set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
++    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)  # GrokWatch: 30_4 cost 244 KB; UI text uses gz_20 + assets font
+     set(BUILTIN_ICON_FONT font_material_symbols_30_4)
+     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+ elseif(CONFIG_BOARD_TYPE_M5STACK_CORE_P4)
+@@ -1126,6 +1126,9 @@ if(CONFIG_IDF_TARGET_ESP32S3)
+ endif()
+ 
+ set(MAIN_PRIV_REQUIRES_EXTRA "")
++if(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
++    list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_driver_usb_serial_jtag)
++endif()
+ if(CONFIG_XIAOZHI_NETWORK_ETHERNET AND CONFIG_XIAOZHI_ETH_PHY_IP101)
+     list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__ip101)
+ endif()
+@@ -1155,7 +1158,7 @@ idf_component_register(SRCS ${SOURCES}
+                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                     WHOLE_ARCHIVE
+-                    PRIV_REQUIRES
++                    PRIV_REQUIRES bt
+                         esp_pm
+                         esp_psram
+                         esp_netif
+@@ -1210,6 +1213,10 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+                         PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
+                         PRIVATE TEXT_FONT_SIZE=${TEXT_FONT_SIZE} TEXT_FONT_BPP=${TEXT_FONT_BPP}
+                         )
++    # GrokWatch USB test console: debug/private builds only (idf.py -D GW_TEST_CONSOLE=1 ...). Public builds: absent.
++    if(GW_TEST_CONSOLE)
++        target_compile_definitions(${COMPONENT_LIB} PRIVATE GW_TEST_CONSOLE=1)
++    endif()
+     # ESP32-S3 LVGL builtin pool: PSRAM boards allocate it from PSRAM.
+     # Boards that set CONFIG_SPIRAM=n must not keep the 1MB chip-default
+     # pool as a .dram0.bss array (build.py also switches those variants
+diff --git a/main/application.cc b/main/application.cc
+index 9dd16e1..849419b 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -1,4 +1,7 @@
+ #include "application.h"
++#ifdef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++#include "boards/m5stack/stopwatch/gw_health.h"
++#endif
+ #include "assets.h"
+ #include "assets/lang_config.h"
+ #include "audio_codec.h"
+@@ -410,7 +413,11 @@ void Application::CheckAssetsVersion() {
+ 
+     Settings settings("assets", true);
+     // Check if there is a new assets need to be downloaded
++#if GW_TEST_CONSOLE
++    std::string download_url; // Preserve existing resources during recovery testing.
++#else
+     std::string download_url = settings.GetString("download_url");
++#endif
+ 
+     if (!download_url.empty()) {
+         settings.EraseKey("download_url");
+@@ -503,6 +510,12 @@ void Application::CheckNewVersion() {
+         retry_count = 0;
+         retry_delay = 10;  // Reset retry delay
+ 
++#if !GW_TEST_CONSOLE
++#ifdef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++        if (ota_->HasNewVersion() && gw_ota_refuse(gw_ota_bad_version(), ota_->GetFirmwareVersion().c_str())) {
++            ESP_LOGE(TAG, "Refusing OTA %s: it failed to validate before", ota_->GetFirmwareVersion().c_str());
++        } else
++#endif
+         if (ota_->HasNewVersion()) {
+             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+                 return;  // This line will never be reached after reboot
+@@ -510,8 +523,15 @@ void Application::CheckNewVersion() {
+             // If upgrade failed, continue to normal operation
+         }
+ 
++#else
++        // CheckVersion also retrieves service credentials and activation state.
++        // Keep that request; suppress only firmware installation in test builds.
++        ESP_LOGW(TAG, "Service configuration loaded; automatic OTA install disabled");
++#endif
+         // No new version, mark the current version as valid
+-        ota_->MarkCurrentVersionValid();
++#ifndef CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++        ota_->MarkCurrentVersionValid();   // GrokWatch validates from local boot health instead (boards/m5stack/stopwatch/gw_health*)
++#endif
+         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
+             // Exit the loop if done checking new version
+             break;
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index 358a094..221aeda 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -664,6 +664,9 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopWakeWordPacket() {
+ 
+ void AudioService::EnableWakeWordDetection(bool enable) {
+     ESP_LOGD(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
++#if CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++    enable = false;   // GrokWatch 2.6.24: no always-on listening; the mic opens only for a button-started session
++#endif
+     if (enable) {
+         if (!InitializeAudioEngine()) {
+             xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
+index e245876..3027889 100644
+--- a/main/audio/engines/afe_audio_engine.cc
++++ b/main/audio/engines/afe_audio_engine.cc
+@@ -15,7 +15,10 @@
+ 
+ #define TAG "AfeAudioEngine"
+ 
+-#if CONFIG_USE_AUDIO_PROCESSOR
++#if CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++// GrokWatch 2.6.24: no wake word, no AFE. Raw mic only while the button-started session listens.
++static constexpr bool kUseAfeForVoiceProcessing = false;
++#elif CONFIG_USE_AUDIO_PROCESSOR
+ static constexpr bool kUseAfeForVoiceProcessing = true;
+ #else
+ static constexpr bool kUseAfeForVoiceProcessing = false;
+@@ -79,6 +82,10 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
+             ESP_LOGI(TAG, "Model %d: %s", i, models_->model_name[i]);
+         }
+     }
++#if CONFIG_BOARD_TYPE_M5STACK_STOPWATCH
++    wakenet_model_name = nullptr;   // GrokWatch 2.6.24: wake words removed (assets models ignored)
++    multinet_model_name = nullptr;
++#endif
+ 
+     if (multinet_model_name != nullptr) {
+         wake_detector_ = WakeDetector::kMultiNet;
+diff --git a/main/display/lcd_display.cc b/main/display/lcd_display.cc
+index 6d0643c..1c035b7 100644
+--- a/main/display/lcd_display.cc
++++ b/main/display/lcd_display.cc
+@@ -177,8 +177,8 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
+         .io_handle = panel_io_,
+         .panel_handle = panel_,
+         .control_handle = nullptr,
+-        .buffer_size = static_cast<uint32_t>(width_ * 20),
+-        .double_buffer = false,
++        .buffer_size = static_cast<uint32_t>(width_ * 16),
++        .double_buffer = true,   // [GrokWatch] render next strip while previous one is on the QSPI bus
+         .trans_size = 0,
+         .hres = static_cast<uint32_t>(width_),
+         .vres = static_cast<uint32_t>(height_),
+diff --git a/main/display/lvgl_display/lvgl_display.cc b/main/display/lvgl_display/lvgl_display.cc
+index 12a887e..669357e 100644
+--- a/main/display/lvgl_display/lvgl_display.cc
++++ b/main/display/lvgl_display/lvgl_display.cc
+@@ -50,6 +50,9 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
+     }
+ 
+     DisplayLockGuard lock(this);
++    if (!lock) {
++        return false;
++    }
+     auto& theme_manager = LvglThemeManager::GetInstance();
+     auto light_theme = theme_manager.GetTheme("light");
+     auto dark_theme = theme_manager.GetTheme("dark");
+@@ -70,6 +73,9 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
+     if (current_theme_ != nullptr) {
+         SetTheme(current_theme_);
+     }
++    if (text_font_changed_cb_ != nullptr) {
++        text_font_changed_cb_(text_font->font());
++    }
+     previous_light_font.reset();
+     previous_dark_font.reset();
+     return true;
+@@ -111,6 +117,9 @@ void LvglDisplay::ClearTextGlyphs() {
+         return;
+     }
+     DisplayLockGuard lock(this);
++    if (!lock) {
++        return;
++    }
+     dynamic_glyph_cache_->Clear();
+ }
+ 
+diff --git a/main/display/lvgl_display/lvgl_display.h b/main/display/lvgl_display/lvgl_display.h
+index 465e020..4dbe242 100644
+--- a/main/display/lvgl_display/lvgl_display.h
++++ b/main/display/lvgl_display/lvgl_display.h
+@@ -33,7 +33,15 @@ public:
+     virtual bool SetTextFont(std::shared_ptr<LvglFont> text_font) override;
+     virtual bool SupportsGuiOperations() const override { return true; }
+ 
++    // Called (under the display lock) after SetTextFont() rebinds the theme and BEFORE the previous
++    // font is released, so code holding raw lv_font_t* (e.g. as a .fallback) can re-point them.
++    using TextFontChangedCallback = void (*)(const lv_font_t* new_font);
++    // Register during UI initialization while holding this display's lock.
++    // The callback must not retain the new font beyond its next replacement.
++    static void SetTextFontChangedCallback(TextFontChangedCallback cb) { text_font_changed_cb_ = cb; }
++
+ protected:
++    static inline TextFontChangedCallback text_font_changed_cb_ = nullptr;
+     esp_pm_lock_handle_t pm_lock_ = nullptr;
+     lv_display_t* display_ = nullptr;
+ 
+diff --git a/main/ota.cc b/main/ota.cc
+index 124d333..1466191 100644
+--- a/main/ota.cc
++++ b/main/ota.cc
+@@ -278,6 +278,10 @@ void Ota::MarkCurrentVersionValid() {
+ }
+ 
+ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback) {
++#if GW_TEST_CONSOLE
++    ESP_LOGW(TAG, "OTA writes disabled in hardware-test console build");
++    return false;
++#endif
+     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
+     esp_ota_handle_t update_handle = 0;
+     auto update_partition = esp_ota_get_next_update_partition(NULL);
