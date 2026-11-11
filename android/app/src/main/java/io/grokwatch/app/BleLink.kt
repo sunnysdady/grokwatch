@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
@@ -54,7 +55,14 @@ class BleLink(private val ctx: Context, private val onReady: () -> Unit) {
             val s = g.getService(Proto.SVC); rx = s?.getCharacteristic(Proto.RX)
             if (rx == null) { g.disconnect(); return }
             s.getCharacteristic(Proto.TX)?.let { tx -> g.setCharacteristicNotification(tx, true)
-                tx.getDescriptor(Proto.CCCD)?.let { g.writeDescriptor(it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) } }
+                tx.getDescriptor(Proto.CCCD)?.let {
+                    if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                    else { @Suppress("DEPRECATION")
+                        it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        @Suppress("DEPRECATION")
+                        g.writeDescriptor(it)
+                    }
+                } }
             backoff = 2000L; Hub.device.value = g.device.name ?: g.device.address
             h.postDelayed({ Hub.link.value = Link.CONNECTED; onReady() }, 300)
         }
@@ -70,8 +78,15 @@ class BleLink(private val ctx: Context, private val onReady: () -> Unit) {
         val f: ByteArray
         synchronized(q) { if (done) busy = false; if (busy) return; f = q.poll() ?: return; busy = true }
         val wt = if (f[0] == Proto.BG_DATA.toByte()) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT   // bulk photo: no ATT round trip per chunk
-        val rc = g.writeCharacteristic(c, f, wt)
-        if (rc != BluetoothStatusCodes.SUCCESS) { synchronized(q) { busy = false; q.addFirst(f) }; h.postDelayed({ pump(false) }, 60) }
+        val accepted = if (Build.VERSION.SDK_INT >= 33) g.writeCharacteristic(c, f, wt) == BluetoothStatusCodes.SUCCESS
+        else {
+            @Suppress("DEPRECATION")
+            c.value = f
+            c.writeType = wt
+            @Suppress("DEPRECATION")
+            g.writeCharacteristic(c)
+        }
+        if (!accepted) { synchronized(q) { busy = false; q.addFirst(f) }; h.postDelayed({ pump(false) }, 60) }
         else Hub.sent.value++
     }
 }

@@ -40,16 +40,42 @@ private val Num = FontFamily.Default
 
 class MainActivity : ComponentActivity() {
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { LinkService.start(this); tick++ }
-    private val pickBg = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) Thread {
-        val ok = try { WatchBg.send(WatchBg.pixels(this, uri)) } catch (e: Exception) { false }
-        runOnUiThread { android.widget.Toast.makeText(this, if (ok) "已发送到手表" else "发送失败，请保持手表连接后重试", android.widget.Toast.LENGTH_SHORT).show() } }.start() }
+    private var selectedBg by mutableStateOf<Uri?>(null)
+    private var preparingBg by mutableStateOf(false)
+    private val pickBg = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) selectedBg = uri }
     private var tick by mutableIntStateOf(0)
     override fun onResume() { super.onResume(); tick++ }
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
+        selectedBg = s?.getString("backgroundUri")?.let(Uri::parse)
         val need = arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
         if (need.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) perms.launch(need) else LinkService.start(this)
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = ORG, background = Color.Black, surface = CARD)) { Screen(tick) } }
+        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = ORG, background = Color.Black, surface = CARD)) {
+            val uri = selectedBg
+            val progress by WatchBg.progress.collectAsStateWithLifecycle()
+            val link by Hub.link.collectAsStateWithLifecycle()
+            if (uri == null) Screen(tick) else WatchBgCropScreen(uri, preparingBg || progress >= 0, progress, link == Link.CONNECTED,
+                onCancel = { selectedBg = null },
+                onReselect = { pickBg.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onConfirm = { zoom, x, y -> sendBackground(uri, zoom, x, y) })
+        } }
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("backgroundUri", selectedBg?.toString())
+        super.onSaveInstanceState(outState)
+    }
+    private fun sendBackground(uri: Uri, zoom: Double, x: Double, y: Double) {
+        if (preparingBg || WatchBg.progress.value >= 0 || Hub.link.value != Link.CONNECTED) return
+        preparingBg = true
+        WatchBg.progress.value = 0
+        Thread {
+            val ok = try { WatchBg.send(WatchBg.pixels(applicationContext, uri, zoom, x, y)) } catch (_: Exception) { false }
+            runOnUiThread {
+                preparingBg = false; WatchBg.progress.value = -1
+                if (ok) selectedBg = null
+                android.widget.Toast.makeText(this, if (ok) "已提交传输，请在手表确认效果" else "传输失败，裁切位置已保留，请检查连接后重试", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
     private fun ok(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
     private fun notiOk() = NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
@@ -66,7 +92,14 @@ class MainActivity : ComponentActivity() {
             Text("手表连接", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(20.dp))
             Hero(link, dev, nav, spd)
-            Spacer(Modifier.height(24.dp)); Section("准备")
+            Spacer(Modifier.height(24.dp)); Section("表盘")
+            val bgp by WatchBg.progress.collectAsStateWithLifecycle()
+            Card {
+                Action("更换背景图片", if (bgp >= 0) "正在发送 $bgp %" else "选图后预览圆形裁切，调整位置和缩放，再确认传输") {
+                    if (bgp < 0) pickBg.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                Sep(); Action("恢复纯黑背景", "去掉表盘背景图") { WatchBg.clear() }
+            }
+            Fold("连接与权限", if (notiOk() && ok(Manifest.permission.BLUETOOTH_CONNECT) && ok(Manifest.permission.ACCESS_FINE_LOCATION) && batteryOk()) "基础权限已开启" else "部分权限未开启，点此检查") {
             Card {
                 Row_("通知使用权", "读取高德 / Google 地图导航和消息", notiOk()) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
                 Sep()
@@ -80,21 +113,16 @@ class MainActivity : ComponentActivity() {
                     try { startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) }
                     catch (_: Exception) { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } }
             }
-            Spacer(Modifier.height(24.dp)); Section("转发")
+            }
+            Fold("骑行设置", "导航、消息通知与车速转发") {
             Card {
                 Toggle("导航", "转弯箭头、距离、道路、到达时间", p.getBoolean("nav", true)) { p.edit().putBoolean("nav", it).apply() }
                 Sep(); Toggle("读取导航界面（无障碍）", "只读高德 / Google 地图导航页上的文字，不点击、不记录位置；有数据时优先于通知", p.getBoolean("nav_a11y", true)) { p.edit().putBoolean("nav_a11y", it).apply() }
                 Sep(); Toggle("消息通知", "微信、短信等普通通知", p.getBoolean("notify", true)) { p.edit().putBoolean("notify", it).apply() }
                 Sep(); Toggle("车速", "手机 GPS，每秒一次", p.getBoolean("speed", true)) { p.edit().putBoolean("speed", it).apply() }
             }
-            Spacer(Modifier.height(24.dp)); Section("表盘")
-            val bgp by WatchBg.progress.collectAsStateWithLifecycle()
-            Card {
-                Action("更换背景图片", if (bgp >= 0) "正在发送 $bgp %" else "从相册选一张，居中裁成圆形表盘，约 20 秒传完") {
-                    if (link != Link.CONNECTED) android.widget.Toast.makeText(this@MainActivity, "手表未连接", android.widget.Toast.LENGTH_SHORT).show()
-                    else if (bgp < 0) pickBg.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-                Sep(); Action("恢复纯黑背景", "去掉表盘背景图") { WatchBg.clear() }
             }
+            Fold("开发者选项", "测试导航、连接调试、更新源与日志") {
             Spacer(Modifier.height(24.dp)); Section("调试")
             Card {
                 Action("发送测试导航", "手表导航页应显示 350 m 左转") {
@@ -137,6 +165,7 @@ class MainActivity : ComponentActivity() {
             if (dump.isNotEmpty()) { Spacer(Modifier.height(12.dp)); Card { Text(dump.take(6000), color = SEC, fontSize = 10.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(16.dp)) } }
             Spacer(Modifier.height(14.dp))
             Text("已发送 $sent 帧" + (if (note.isNotEmpty()) " · 最近：$note" else ""), color = SEC, fontSize = 12.sp, maxLines = 1)
+            }
             Spacer(Modifier.height(30.dp))
         }
     }
@@ -164,6 +193,15 @@ class MainActivity : ComponentActivity() {
                     Text(if (nav.active) "${nav.app} · ${nav.dist} ${nav.road}" else "未在导航 · km/h", color = if (nav.active) ORG else SEC, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
             }
+        }
+    }
+    @Composable fun Fold(title: String, summary: String, content: @Composable () -> Unit) {
+        var expanded by remember { mutableStateOf(false) }
+        Spacer(Modifier.height(12.dp))
+        Card { Action(title, if (expanded) "收起" else summary) { expanded = !expanded } }
+        if (expanded) {
+            Spacer(Modifier.height(8.dp))
+            content()
         }
     }
     @Composable fun Section(t: String) { Text(t, color = SEC, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp, bottom = 8.dp)) }

@@ -3,7 +3,9 @@
 #include "lvgl.h"
 #include "gw_faces.h"
 #include "gw_slide.h"
+#ifndef GW_SIM_NO_CBIN
 #include "cbin_font.h"
+#endif
 #ifndef GW_FONT_BIN
 #error "build with sim/build.sh (defines GW_FONT_BIN)"
 #endif
@@ -11,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <assert.h>
 #define W 466
 static uint16_t fb[W*W]; static const char* OUT; static int shot_n=0, missing_total=0;
 static long flushed=0; static void flush(lv_display_t* d,const lv_area_t* a,uint8_t* px){ int w=a->x2-a->x1+1; flushed+=(long)w*(a->y2-a->y1+1); for(int y=a->y1;y<=a->y2;y++) memcpy(&fb[y*W+a->x1],px+((long)y*W+a->x1)*2,w*2); lv_display_flush_ready(d);}
@@ -157,20 +160,64 @@ static void after24(void){ (void)sl_y; char nm[64]; gw_faces_set_slide(false); s
     gw_grok_state(0); for(int i=0;i<10;i++){ step(30); gif_frame(nm); }
     snprintf(nm,sizeof nm,"a24slide_%s_grok_face",D); slide_gif(nm,1,1); }
   night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); gw_grok_set_night(false); sim_slide=0; gw_slide_set_hw(NULL); }
+static int power_dismissed;
+static void dismiss_power(void){ power_dismissed++; }
+static int power_checks(void){
+  static uint16_t photo[W*W]; for(int i=0;i<W*W;i++) photo[i]=0xc488;
+  gw_faces_set_bg(photo);
+  for(int n=0;n<2;n++){
+    night=n; gw_faces_set_night(n); gw_faces_create(lv_screen_active()); go(GW_PAGE_FACE,1);
+    shot(n?"power_photo_night":"power_photo_day");
+    int unchanged=0; for(int i=0;i<W*W;i++) if(fb[i]==0xc488) unchanged++;
+    if(n) assert(unchanged==0); // Night mode deliberately dims the photo.
+    else assert(unchanged>W*W/2); // Day mode must retain the original photo pixels.
+  }
+  night=false; gw_faces_set_night(false); gw_faces_create(lv_screen_active()); go(GW_PAGE_FACE,1);
+  static uint16_t awake_frame[W*W]; step(2500); frame(); memcpy(awake_frame,fb,sizeof fb);
+  { char path[512]; snprintf(path,sizeof path,"%s/wake_baseline.ppm",OUT); save_ppm(path); }
+  gw_standby_create(lv_layer_top()); gw_standby_set(12,34,0); gw_standby_show(true); step(400);
+  gw_standby_set(12,35,0); step(150); gw_standby_show(false); assert(lv_anim_count_running()==1); step(150); frame();
+  { char path[512]; snprintf(path,sizeof path,"%s/wake_mid.ppm",OUT); save_ppm(path); }
+  step(150); frame(); assert(!gw_standby_is_on());
+  { char path[512]; snprintf(path,sizeof path,"%s/wake_after.ppm",OUT); save_ppm(path); }
+  assert(!memcmp(awake_frame,fb,sizeof fb));
+  step(2000); frame(); assert(!memcmp(awake_frame,fb,sizeof fb));
+  shot("power_wake_clean");
+  gw_power_create(lv_layer_top(),dismiss_power);
+  gw_power_show(67,false,false,false,0); shot("power_battery_67");
+  gw_power_show(15,false,false,false,0); shot("power_battery_low");
+  gw_power_show(-1,false,false,false,0); shot("power_battery_unknown");
+  static uint16_t dim_frame[W*W];
+  for(int i=0;i<2;i++){
+    gw_power_show(67,true,true,false,i); shot(i?"power_charging_bright":"power_charging_dim");
+    if(!i) memcpy(dim_frame,fb,sizeof fb);
+    else assert(memcmp(dim_frame,fb,sizeof fb)!=0); // The bolt must visibly animate.
+  }
+  lv_obj_t* top=lv_layer_top(); lv_obj_t* screen=lv_obj_get_child(top,-1);
+  assert(!lv_obj_has_flag(screen,LV_OBJ_FLAG_HIDDEN));
+  tap(233,380); assert(power_dismissed==1); assert(lv_obj_has_flag(screen,LV_OBJ_FLAG_HIDDEN));
+  gw_power_show(100,true,true,false,0); shot("power_charging_100");
+  gw_power_show(100,true,false,true,0); assert(lv_obj_has_flag(screen,LV_OBJ_FLAG_HIDDEN));
+  gw_power_show(67,false,false,false,0); shot("power_unplugged");
+  gw_power_show(31,2,true,false,1); shot("power_connected_not_charging");
+  printf("POWER UI %s; missing glyphs: %d\n",missing_total?"FAIL":"PASS",missing_total);
+  return missing_total?1:0;
+}
 int main(int argc,char**argv){
   OUT=argv[1]; lv_init(); lv_tick_set_cb(tk);
   d=lv_display_create(W,W); static uint8_t buf[W*W*2]; lv_display_set_buffers(d,buf,NULL,sizeof buf,LV_DISPLAY_RENDER_MODE_DIRECT); lv_display_set_flush_cb(d,flush); lv_display_add_event_cb(d,refr_cb,LV_EVENT_REFR_START,NULL);
   lv_indev_t* in=lv_indev_create(); lv_indev_set_type(in,LV_INDEV_TYPE_POINTER); lv_indev_set_read_cb(in,indev_read);
-  const char* fp=GW_FONT_BIN; /* absolute path injected by build.sh (-DGW_FONT_BIN=...) */ FILE* ff=fopen(fp,"rb"); if(!ff){ fprintf(stderr,"font not found: %s (run build.sh)\n",fp); return 1; } fseek(ff,0,SEEK_END); long n=ftell(ff); rewind(ff); uint8_t* fbn=malloc(n); fread(fbn,1,n,ff); fclose(ff);
 #ifdef GW_SIM_NO_CBIN   /* 64-bit hosts (arm64 Mac): cbin fonts need 32-bit pointers; use the built-in 20 px CJK font */
-  LV_FONT_DECLARE(gz_20); (void)fbn; lv_font_t* noto=(lv_font_t*)&gz_20;
+  LV_FONT_DECLARE(gz_20); lv_font_t* noto=(lv_font_t*)&gz_20;
 #else
+  const char* fp=GW_FONT_BIN; /* absolute path injected by build.sh (-DGW_FONT_BIN=...) */ FILE* ff=fopen(fp,"rb"); if(!ff){ fprintf(stderr,"font not found: %s (run build.sh)\n",fp); return 1; } fseek(ff,0,SEEK_END); long n=ftell(ff); rewind(ff); uint8_t* fbn=malloc(n); fread(fbn,1,n,ff); fclose(ff);
   lv_font_t* noto=cbin_font_create(fbn);
 #endif
   lv_obj_t* scr=lv_screen_active(); lv_obj_set_style_bg_color(scr,lv_color_black(),0); lv_obj_set_style_text_font(scr,noto,0); lv_obj_set_style_text_color(scr,lv_color_white(),0);
   lv_obj_t* cont=lv_obj_create(scr); lv_obj_remove_style_all(cont); lv_obj_set_size(cont,W,W); lv_obj_set_style_bg_opa(cont,255,0); lv_obj_set_style_bg_color(cont,lv_color_black(),0);
   gw_faces_set_fallback(noto); gw_faces_set_fade(false); gw_faces_create(scr); lv_obj_add_flag(scr,LV_OBJ_FLAG_CLICKABLE); lv_obj_add_event_cb(scr,gesture_cb,LV_EVENT_GESTURE,NULL);
   cc.bright=60; cc.volume=60; tick=1000000;
+  if(argc>2 && !strcmp(argv[2],"--power")) return power_checks();
   // 1) cold: phone app not connected
   go(2,1); shot("ride_phone_not_connected");
   go(GW_PAGE_NAV,1); shot("nav_phone_not_connected");

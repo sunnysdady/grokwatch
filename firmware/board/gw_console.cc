@@ -24,11 +24,14 @@ extern "C" void gw_console_start(void);
 void NavUiGoPage(int p); int NavUiPage(); void NavUiTouchLog(bool on); void NavUiFpsLog(bool on); bool NavUiSlideOn();
 uint32_t NavUiFrameStats(int n,int* mn,int* av,int* mx);
 int GwRotCmd(const char* key,int val,char* out,int n);
+int GwPowerDiag(char* out,int n);
 int GwBatCmd(char* out,int n);   // 2.6.37
 static const char* TAG="gwcon";
 static volatile int inj_x=233, inj_y=233; static volatile bool inj_down=false;
 static void inj_read(lv_indev_t*, lv_indev_data_t* d){ d->point.x=inj_x; d->point.y=inj_y; d->state=inj_down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED; }
-static void out(const char* s){ usb_serial_jtag_write_bytes(s, strlen(s), pdMS_TO_TICKS(50)); }
+#include "gw_console_write.h"
+static int usb_send(const char* s,size_t n){ return usb_serial_jtag_write_bytes(s,n,pdMS_TO_TICKS(200)); }
+static void out(const char* s){ (void)gw_console_write(s,strlen(s),usb_send); }
 static void outf(const char* f, ...){ char b[320]; va_list a; va_start(a,f); vsnprintf(b,sizeof b,f,a); va_end(a); out(b); }
 static void drag(int x0,int y0,int x1,int y1,int ms){ int steps=ms/10; inj_x=x0; inj_y=y0; inj_down=true; vTaskDelay(pdMS_TO_TICKS(40));
   for(int i=1;i<=steps;i++){ inj_x=x0+(x1-x0)*i/steps; inj_y=y0+(y1-y0)*i/steps; vTaskDelay(pdMS_TO_TICKS(10)); } inj_down=false; vTaskDelay(pdMS_TO_TICKS(60)); }
@@ -91,6 +94,7 @@ static void handle(char* l){
   else if(!strcmp(c,"fps")){ NavUiFpsLog(!strcmp(a,"on")); out("OK\n"); }
   else if(!strcmp(c,"touchlog")){ NavUiTouchLog(!strcmp(a,"on")); out("OK\n"); }
   else if(!strcmp(c,"rot")){ char b[200]; GwRotCmd(a,y,b,sizeof b); out(b); }   // rot | rot <rot|rot_ax|rot_sg|rot_mad|rot_gx|rot_gy> v
+  else if(!strcmp(c,"power")){ char b[200]; GwPowerDiag(b,sizeof b); out(b); }
   else if(!strcmp(c,"bat")){ static char b[4096]; GwBatCmd(b,sizeof b); out(b); }   // 2.6.37 battery log
   else out("CMDS: swipe l|r|u|d | tap x y | longpress x y | page n | stat | fps on|off | touchlog on|off | rot [key v] | bat\n"); }
 static void task(void*){ char line[96]; int n=0;

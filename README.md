@@ -12,7 +12,7 @@ GrokWatch 是给 M5Stack StopWatch (ESP32-S3) 做的骑行大屏伴侣固件，�
 - Grok 语音：按蓝色键说话，有语音回复和字幕，离线时会显示
 - 上滑打开控制中心：亮度、音量、夜间模式（低亮度暖白）、勿扰、电量、BLE/Wi-Fi
 - 待机时钟：息屏后纯黑底翻页卡片时:分，整分钟翻牌，每分钟微移防烧屏
-- 表盘背景：在 App 里「表盘 > 更换背景图片」选照片，经 BLE 发到手表，重启后保留
+- 表盘背景：在 App 里「表盘 > 更换背景图片」选照片，在圆形模板内拖动、缩放并预览，确认后经 BLE 发到手表，重启后保留。导入保留原图亮度，以抖动量化减轻 RGB565 色带；夜间模式仍会调暗显示
 - 切页：手指跟随滑动，QSPI 80 MHz + TE 同步出帧；纯黑无边框页面
 - 自动翻转：挂绳倒挂时按 BMI270 加速度计自动把屏幕转 180°
 - 不转发普通通知：App 只读取高德 / Google 地图的导航通知
@@ -32,6 +32,10 @@ App 只读取地图导航通知，只通过 BLE 发给手表，不上传；普�
 ### 模拟器
 `sim/run.sh`，截图在 `docs/screens/`。
 
+### 本地回归测试
+- `sh firmware/board/test/run.sh`：导航/骑行模型、启动健康检查、输入、方向和完整待机唤醒生命周期（需要 C 编译器）。
+- `sh android/test/run.sh`：图片 RGB565 编码和裁切坐标回归（需要 JDK 17+，无需 Android SDK）。此入口不替代 Android APK 构建和真机预览验收。
+
 ## English
 GrokWatch is cycling big-screen companion firmware for the M5Stack StopWatch (ESP32-S3), with an Android companion app. It is based on xiaozhi-esp32.
 - Navigation and cycling computer: AMap arrows, distance, ETA, pre-turn haptics, plus speed, ride timer, km and a ride summary.
@@ -46,3 +50,21 @@ GrokWatch is cycling big-screen companion firmware for the M5Stack StopWatch (ES
 Build: same steps as the Chinese section above. OTA: drop the bin into the server's `data/bin`; app rollback is enabled. Privacy: only map navigation notifications are read, sent over BLE only and never uploaded; no secrets are in the repo.
 
 License: MIT (see LICENSE), compatible with xiaozhi-esp32 (MIT).
+
+Android 完整验证（需 JDK 21、Android SDK 36）：
+
+```sh
+sh android/test/verify.sh
+# 仅对指定本地模拟器执行页面测试，不操作 USB 手表
+ANDROID_SERIAL=emulator-5554 sh android/test/verify.sh --emulator
+```
+
+首页保留连接状态和表盘入口；连接权限、骑行设置可展开查看，开发者选项默认收起，集中放置测试导航、更新源与解析日志。
+
+固件电量/充电与唤醒画面回归（LVGL 9.5.0 源码就绪后）：
+```sh
+GW_TEST_UI=1 SIM64=1 LVGL_DIR=/absolute/path/to/lvgl \
+SIM_WORK=/tmp/grokwatch-sim GW_UI_OUT=/tmp/grokwatch-ui \
+sh firmware/board/test/run.sh
+```
+该入口同时运行常规逻辑测试、照片日夜亮度、电量/充电截图、闪电动画帧差、点击关闭，以及翻页中唤醒后的画面一致性检查。主机截图不能代替屏幕实机验收。
